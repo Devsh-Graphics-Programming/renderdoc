@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -39,6 +39,11 @@ void VulkanReplay::CreateTexImageView(VkImage liveIm, const VulkanCreationInfo::
   if(views.typeCast != typeCast)
   {
     // if the type hint has changed, recreate the image views
+
+    // flush any pending commands that might use the old views
+    m_pDriver->SubmitCmds();
+    m_pDriver->FlushQ();
+
     for(size_t i = 0; i < ARRAY_COUNT(views.views); i++)
     {
       m_pDriver->vkDestroyImageView(dev, views.views[i], NULL);
@@ -104,6 +109,8 @@ void VulkanReplay::CreateTexImageView(VkImage liveIm, const VulkanCreationInfo::
     // create first view
     vkr = m_pDriver->vkCreateImageView(dev, &viewInfo, NULL, &views.views[0]);
     CheckVkResult(vkr);
+    NameVulkanObject(views.views[0], StringFormat::Fmt("CreateTexImageView view 0 %s",
+                                                       ToStr(GetResID(liveIm)).c_str()));
 
     // for depth-stencil images, create a second view for stencil only
     if(IsDepthAndStencilFormat(fmt))
@@ -112,6 +119,8 @@ void VulkanReplay::CreateTexImageView(VkImage liveIm, const VulkanCreationInfo::
 
       vkr = m_pDriver->vkCreateImageView(dev, &viewInfo, NULL, &views.views[1]);
       CheckVkResult(vkr);
+      NameVulkanObject(views.views[1], StringFormat::Fmt("CreateTexImageView view 1 %s",
+                                                         ToStr(GetResID(liveIm)).c_str()));
     }
   }
 }
@@ -285,6 +294,9 @@ bool VulkanReplay::RenderTextureInternal(TextureDisplay cfg, const ImageState &i
 
   data->FlipY = cfg.flipY ? 1 : 0;
 
+  const bool linearSample = cfg.subresource.mip == 0 && cfg.scale < 1.0f &&
+                            (displayformat & (TEXDISPLAY_UINT_TEX | TEXDISPLAY_SINT_TEX)) == 0;
+
   data->MipLevel = (int)cfg.subresource.mip;
   data->Slice = 0;
   if(iminfo.type != VK_IMAGE_TYPE_3D)
@@ -300,8 +312,7 @@ bool VulkanReplay::RenderTextureInternal(TextureDisplay cfg, const ImageState &i
 
     // when sampling linearly, we need to add half a pixel to ensure we only sample the desired
     // slice
-    if(cfg.subresource.mip == 0 && cfg.scale < 1.0f &&
-       (displayformat & (TEXDISPLAY_UINT_TEX | TEXDISPLAY_SINT_TEX)) == 0)
+    if(linearSample)
       slice += 0.5f;
     else
       slice += 0.001f;
@@ -368,33 +379,21 @@ bool VulkanReplay::RenderTextureInternal(TextureDisplay cfg, const ImageState &i
   {
     // must match struct declared in user shader (see documentation / Shader Viewer window helper
     // menus)
-    struct CustomTexDisplayUBOData
-    {
-      Vec4u texDim;
-      uint32_t selectedMip;
-      uint32_t texType;
-      uint32_t selectedSliceFace;
-      int32_t selectedSample;
-      Vec4u YUVDownsampleRate;
-      Vec4u YUVAChannels;
-      float selectedRangeMin;
-      float selectedRangeMax;
-    };
 
-    CustomTexDisplayUBOData *customData = (CustomTexDisplayUBOData *)data;
+    RD_CustomShader_UBO_Type *customData = (RD_CustomShader_UBO_Type *)data;
 
-    customData->texDim.x = iminfo.extent.width;
-    customData->texDim.y = iminfo.extent.height;
-    customData->texDim.z = iminfo.extent.depth;
-    customData->texDim.w = iminfo.mipLevels;
-    customData->selectedMip = cfg.subresource.mip;
-    customData->selectedSliceFace = cfg.subresource.slice;
-    customData->selectedSample = sampleIdx;
-    customData->texType = (uint32_t)textype;
+    customData->TexDim.x = iminfo.extent.width;
+    customData->TexDim.y = iminfo.extent.height;
+    customData->TexDim.z = iminfo.type == VK_IMAGE_TYPE_3D ? iminfo.extent.depth : iminfo.arrayLayers;
+    customData->TexDim.w = iminfo.mipLevels;
+    customData->SelectedMip = cfg.subresource.mip;
+    customData->SelectedSliceFace = cfg.subresource.slice;
+    customData->SelectedSample = sampleIdx;
+    customData->TextureType = (uint32_t)textype;
     customData->YUVDownsampleRate = YUVDownsampleRate;
     customData->YUVAChannels = YUVAChannels;
-    customData->selectedRangeMin = cfg.rangeMin;
-    customData->selectedRangeMax = cfg.rangeMax;
+    customData->SelectedRange.x = cfg.rangeMin;
+    customData->SelectedRange.y = cfg.rangeMax;
   }
 
   m_TexRender.UBO.Unmap();
@@ -435,7 +434,7 @@ bool VulkanReplay::RenderTextureInternal(TextureDisplay cfg, const ImageState &i
   imdesc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   imdesc.imageView = Unwrap(liveImView);
   imdesc.sampler = Unwrap(m_General.PointSampler);
-  if(cfg.subresource.mip == 0 && cfg.scale < 1.0f)
+  if(linearSample)
     imdesc.sampler = Unwrap(m_TexRender.LinearSampler);
 
   VkDescriptorImageInfo altimdesc[2] = {};
@@ -445,7 +444,7 @@ bool VulkanReplay::RenderTextureInternal(TextureDisplay cfg, const ImageState &i
     altimdesc[i - 1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     altimdesc[i - 1].imageView = Unwrap(texviews.views[i]);
     altimdesc[i - 1].sampler = Unwrap(m_General.PointSampler);
-    if(cfg.subresource.mip == 0 && cfg.scale < 1.0f)
+    if(linearSample)
       altimdesc[i - 1].sampler = Unwrap(m_TexRender.LinearSampler);
   }
 
@@ -546,7 +545,9 @@ bool VulkanReplay::RenderTextureInternal(TextureDisplay cfg, const ImageState &i
       else
         f = 0;
 
-      pipe = m_TexRender.RemapPipeline[f][i][greenonly ? 1 : 0];
+      bool srgb = (flags & eTexDisplay_RemapSRGB) != 0;
+
+      pipe = m_TexRender.RemapPipeline[f][i][(greenonly || srgb) ? 1 : 0];
     }
     else if(f16render)
     {

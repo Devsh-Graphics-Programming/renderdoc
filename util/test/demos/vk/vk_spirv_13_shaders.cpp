@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,7 @@ void vertmain(in float3 pos : INPOS, in float4 col : INCOL, in float2 uv : UV,
               out float4 opos : SV_Position, out float4 outcol : COL)
 {
 	opos = float4(pos.xyz*float3(1,-1,1), 1);
-	outcol = col;
+	outcol = col + 1.0e-10 * uv.xyxy;
 }
 
 )EOSHADER";

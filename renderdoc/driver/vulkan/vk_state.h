@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -42,6 +42,10 @@ struct VulkanStatePipeline
     rdcarray<uint32_t> offsets;
   };
   rdcarray<DescriptorAndOffsets> descSets;
+  // the index of the last set bound. In the case where we are re-binding sets and don't have a
+  // valid pipeline to reference, this can help us resolve which descriptor sets to rebind in the
+  // event that they're not all compatible
+  uint32_t lastBoundSet = 0;
 };
 
 struct VulkanRenderState
@@ -59,12 +63,6 @@ struct VulkanRenderState
   void BeginRenderPassAndApplyState(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding,
                                     bool obeySuspending);
   void BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding, bool subpass0);
-
-  void BindDescriptorSets(WrappedVulkan *vk, VkCommandBuffer cmd, VulkanStatePipeline &pipe,
-                          VkPipelineBindPoint bindPoint);
-
-  void BindDescriptorSet(WrappedVulkan *vk, const DescSetLayout &descLayout, VkCommandBuffer cmd,
-                         VkPipelineBindPoint bindPoint, uint32_t setIndex, uint32_t *dynamicOffsets);
 
   void EndRenderPass(VkCommandBuffer cmd);
   void FinishSuspendedRenderPass(VkCommandBuffer cmd);
@@ -114,6 +112,10 @@ struct VulkanRenderState
   byte pushconsts[1024] = {};
   // the actual number of bytes that have been uploaded
   uint32_t pushConstSize = 0;
+  // the layout last used to push. Used for handling cases where we are rebinding
+  // partial/temporarily invalid state like if we are resetting state after a discard pattern and
+  // the command buffer has only pushed some constants but not yet bound a pipeline
+  ResourceId pushLayout;
 
   uint32_t subpass = 0;
   VkSubpassContents subpassContents;
@@ -228,10 +230,32 @@ struct VulkanRenderState
 
     VkImageView fragmentDensityView = VK_NULL_HANDLE;
     VkImageLayout fragmentDensityLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImageView shadingRateView = VK_NULL_HANDLE;
+    VkImageLayout shadingRateLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkExtent2D shadingRateTexelSize = {1, 1};
   } dynamicRendering;
+
+  // fdm offset
+  rdcarray<VkOffset2D> fragmentDensityMapOffsets;
+
+  // shading rate
+  VkExtent2D pipelineShadingRate = {1, 1};
+  VkFragmentShadingRateCombinerOpKHR shadingRateCombiners[2] = {
+      VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
+  };
 
 private:
   ResourceId renderPass;
   ResourceId framebuffer;
   rdcarray<ResourceId> fbattachments;
+
+  void BindDescriptorSetsForPipeline(WrappedVulkan *vk, VkCommandBuffer cmd,
+                                     VulkanStatePipeline &pipe, VkPipelineBindPoint bindPoint);
+
+  void BindDescriptorSetsWithoutPipeline(WrappedVulkan *vk, VkCommandBuffer cmd,
+                                         VulkanStatePipeline &pipe, VkPipelineBindPoint bindPoint);
+
+  void BindDescriptorSet(WrappedVulkan *vk, const DescSetLayout &descLayout, VkCommandBuffer cmd,
+                         VkPipelineBindPoint bindPoint, uint32_t setIndex, uint32_t *dynamicOffsets);
 };

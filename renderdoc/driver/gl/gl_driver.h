@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -111,12 +111,12 @@ private:
 
   GLPlatform &m_Platform;
 
-  ReplayStatus m_FatalError = ReplayStatus::Succeeded;
+  RDResult m_FatalError = ResultCode::Succeeded;
   rdcarray<DebugMessage> m_DebugMessages;
   template <typename SerialiserType>
   void Serialise_DebugMessages(SerialiserType &ser);
   rdcarray<DebugMessage> GetDebugMessages();
-  ReplayStatus FatalErrorCheck() { return m_FatalError; }
+  RDResult FatalErrorCheck() { return m_FatalError; }
   rdcstr m_DebugMsgContext;
 
   bool m_SuppressDebugMessages;
@@ -193,6 +193,8 @@ private:
   rdcarray<GLWindowingData> m_LastContexts;
 
   std::set<void *> m_AcceptedCtx;
+
+  std::set<const char *> m_UnsupportedFunctions;
 
   rdcarray<rdcpair<GLResourceRecord *, Chunk *>> m_BufferResizes;
 
@@ -294,7 +296,7 @@ private:
   uint32_t m_LastEventID;
   GLChunk m_LastChunk;
 
-  ReplayStatus m_FailedReplayStatus = ReplayStatus::APIReplayFailed;
+  RDResult m_FailedReplayResult = ResultCode::APIReplayFailed;
 
   ActionDescription m_ParentAction;
 
@@ -336,8 +338,8 @@ private:
   uint32_t m_InitChunkIndex = 0;
 
   bool ProcessChunk(ReadSerialiser &ser, GLChunk chunk);
-  ReplayStatus ContextReplayLog(CaptureState readType, uint32_t startEventID, uint32_t endEventID,
-                                bool partial);
+  RDResult ContextReplayLog(CaptureState readType, uint32_t startEventID, uint32_t endEventID,
+                            bool partial);
   bool ContextProcessChunk(ReadSerialiser &ser, GLChunk chunk);
   void AddUsage(const ActionDescription &a);
   void AddAction(const ActionDescription &a);
@@ -482,6 +484,12 @@ private:
         return;
       m_TextureRecord[TextureIdx(target)][m_TextureUnit] = record;
     }
+    void ClearMatchingActiveTexRecord(GLResourceRecord *record)
+    {
+      for(size_t i = 0; i < ARRAY_COUNT(m_TextureRecord); i++)
+        if(m_TextureRecord[i][m_TextureUnit] == record)
+          m_TextureRecord[i][m_TextureUnit] = NULL;
+    }
     GLResourceRecord *GetTexUnitRecord(GLenum target, GLenum texunit)
     {
       return m_TextureRecord[TextureIdx(target)][texunit - eGL_TEXTURE0];
@@ -619,6 +627,7 @@ public:
   ContextPair &GetCtx();
   GLResourceRecord *GetContextRecord();
 
+  void UseUnusedSupportedFunction(const char *name);
   void CheckImplicitThread();
 
   void CreateTextureImage(GLuint tex, GLenum internalFormat, GLenum initFormatHint,
@@ -656,7 +665,7 @@ public:
   // replay interface
   void Initialise(GLInitParams &params, uint64_t sectionVersion, const ReplayOptions &opts);
   void ReplayLog(uint32_t startEventID, uint32_t endEventID, ReplayLogType replayType);
-  ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
+  RDResult ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
 
   GLuint GetFakeVAO0() { return m_Global_VAO0; }
   GLuint GetCurrentDefaultFBO() { return m_CurrentDefaultFBO; }

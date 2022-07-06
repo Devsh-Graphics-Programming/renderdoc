@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -24,6 +24,7 @@
  ******************************************************************************/
 
 #include "common/common.h"
+#include "common/formatting.h"
 #include "maths/formatpacking.h"
 #include "maths/matrix.h"
 #include "strings/string_utils.h"
@@ -92,6 +93,7 @@ ReplayOutput::ReplayOutput(ReplayController *parent, WindowingData window, Repla
 
   m_MainOutput.dirty = true;
 
+  m_CustomDirty = false;
   m_OverlayDirty = false;
   m_ForceOverlayRefresh = false;
 
@@ -119,6 +121,7 @@ ReplayOutput::ReplayOutput(ReplayController *parent, WindowingData window, Repla
   m_MainOutput.texture = ResourceId();
 
   m_pController->FatalErrorCheck();
+  m_pDevice = parent->GetDevice();
 
   m_pDevice->GetOutputWindowDimensions(m_MainOutput.outputID, m_Width, m_Height);
 
@@ -196,6 +199,7 @@ void ReplayOutput::SetTextureDisplay(const TextureDisplay &o)
   }
   if(wasClearBeforeDraw && o.backgroundColor != m_RenderData.texDisplay.backgroundColor)
     m_OverlayDirty = true;
+  m_CustomDirty = true;
   m_RenderData.texDisplay = o;
   m_MainOutput.dirty = true;
 }
@@ -217,6 +221,7 @@ void ReplayOutput::SetFrameEvent(int eventId)
   m_EventID = eventId;
 
   m_OverlayDirty = (m_RenderData.texDisplay.overlay != DebugOverlay::NoOverlay);
+  m_CustomDirty = true;
   m_MainOutput.dirty = true;
 
   for(size_t i = 0; i < m_Thumbnails.size(); i++)
@@ -298,6 +303,18 @@ ResourceId ReplayOutput::GetCustomShaderTexID()
 {
   CHECK_REPLAY_THREAD();
 
+  if(m_CustomDirty)
+  {
+    TextureDisplay texDisplay = m_RenderData.texDisplay;
+    texDisplay.rawOutput = false;
+    texDisplay.resourceId = m_pDevice->GetLiveID(texDisplay.resourceId);
+
+    m_CustomShaderResourceId = m_pDevice->ApplyCustomShader(texDisplay);
+    m_pController->FatalErrorCheck();
+
+    m_CustomDirty = false;
+  }
+
   return m_CustomShaderResourceId;
 }
 
@@ -327,7 +344,7 @@ void ReplayOutput::ClearThumbnails()
   m_Thumbnails.clear();
 }
 
-bool ReplayOutput::SetPixelContext(WindowingData window)
+ResultDetails ReplayOutput::SetPixelContext(WindowingData window)
 {
   CHECK_REPLAY_THREAD();
 
@@ -337,13 +354,16 @@ bool ReplayOutput::SetPixelContext(WindowingData window)
 
   m_pController->FatalErrorCheck();
 
-  RDCASSERT(m_PixelContext.outputID > 0);
+  if(m_PixelContext.outputID == 0)
+  {
+    RETURN_ERROR_RESULT(ResultCode::InternalError, "Window creation failed");
+  }
 
-  return m_PixelContext.outputID != 0;
+  return RDResult();
 }
 
-bool ReplayOutput::AddThumbnail(WindowingData window, ResourceId texID, const Subresource &sub,
-                                CompType typeCast)
+ResultDetails ReplayOutput::AddThumbnail(WindowingData window, ResourceId texID,
+                                         const Subresource &sub, CompType typeCast)
 {
   CHECK_REPLAY_THREAD();
 
@@ -373,7 +393,7 @@ bool ReplayOutput::AddThumbnail(WindowingData window, ResourceId texID, const Su
       m_Thumbnails[i].typeCast = typeCast;
       m_Thumbnails[i].dirty = true;
 
-      return true;
+      return RDResult();
     }
   }
 
@@ -387,11 +407,14 @@ bool ReplayOutput::AddThumbnail(WindowingData window, ResourceId texID, const Su
 
   m_pController->FatalErrorCheck();
 
-  RDCASSERT(p.outputID > 0);
-
   m_Thumbnails.push_back(p);
 
-  return true;
+  if(p.outputID == 0)
+  {
+    RETURN_ERROR_RESULT(ResultCode::InternalError, "Window creation failed");
+  }
+
+  return RDResult();
 }
 
 rdcpair<uint32_t, uint32_t> ReplayOutput::PickVertex(uint32_t x, uint32_t y)
@@ -542,7 +565,13 @@ void ReplayOutput::DisplayContext()
   disp.customShaderId = ResourceId();
 
   if(m_RenderData.texDisplay.customShaderId != ResourceId())
+  {
     disp.resourceId = m_CustomShaderResourceId;
+
+    disp.typeCast = CompType::Typeless;
+    disp.customShaderId = ResourceId();
+    disp.subresource.slice = 0;
+  }
 
   if((m_RenderData.texDisplay.overlay == DebugOverlay::QuadOverdrawDraw ||
       m_RenderData.texDisplay.overlay == DebugOverlay::QuadOverdrawPass ||
@@ -685,7 +714,7 @@ void ReplayOutput::Display()
     disp.linearDisplayAsGamma = true;
     disp.flipY = false;
     disp.subresource = m_Thumbnails[i].sub;
-    disp.subresource.sample = ~0U;
+    disp.subresource.sample = 0;
     disp.customShaderId = ResourceId();
     disp.resourceId = m_pDevice->GetLiveID(m_Thumbnails[i].texture);
     disp.typeCast = m_Thumbnails[i].typeCast;
@@ -762,6 +791,8 @@ void ReplayOutput::DisplayTex()
     texDisplay.typeCast = CompType::Typeless;
     texDisplay.customShaderId = ResourceId();
     texDisplay.subresource.slice = 0;
+
+    m_CustomDirty = false;
   }
 
   FloatVector color;

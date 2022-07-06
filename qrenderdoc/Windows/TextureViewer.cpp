@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1338,6 +1338,7 @@ void TextureViewer::UI_OnTextureSelectionChanged(bool newAction)
   m_PrevSize = curSize;
 
   // refresh scroll position
+  UI_CalcScrollbars();
   setScrollPosition(getScrollPosition());
 
   UI_UpdateStatusText();
@@ -3928,17 +3929,16 @@ void TextureViewer::on_saveTex_clicked()
   {
     ANALYTIC_SET(Export.Texture, true);
 
-    bool ret = false;
+    ResultDetails result = {ResultCode::Succeeded};
     QString fn = saveDialog.filename();
 
     m_Ctx.Replay().BlockInvoke(
-        [this, &ret, fn](IReplayController *r) { ret = r->SaveTexture(m_SaveConfig, fn); });
+        [this, &result, fn](IReplayController *r) { result = r->SaveTexture(m_SaveConfig, fn); });
 
-    if(!ret)
+    if(!result.OK())
     {
-      RDDialog::critical(
-          NULL, tr("Error saving texture"),
-          tr("Error saving texture %1.\n\nCheck diagnostic log in Help menu for more details.").arg(fn));
+      RDDialog::critical(NULL, tr("Error saving texture"),
+                         tr("Error saving texture %1:\n\n%2").arg(fn).arg(result.Message()));
     }
   }
 }
@@ -4243,20 +4243,45 @@ void TextureViewer::reloadCustomShaders(const QString &filter)
         QTextStream stream(&fileHandle);
         QString source = stream.readAll();
 
-        bytebuf shaderBytes(source.toUtf8());
+        bytebuf shaderBytes;
 
-        rdcarray<ShaderEncoding> supported = m_Ctx.TargetShaderEncodings();
+        rdcarray<ShaderEncoding> supported = m_Ctx.CustomShaderEncodings();
+        rdcarray<ShaderSourcePrefix> prefixes = m_Ctx.CustomShaderSourcePrefixes();
 
         rdcstr errors;
 
-        // we don't accept this encoding directly, need to compile
-        if(!supported.contains(encoding))
+        if(supported.contains(encoding))
         {
+          // apply any prefix needed
+          for(const ShaderSourcePrefix &prefix : prefixes)
+          {
+            if(prefix.encoding == encoding)
+            {
+              source = QString(prefix.prefix) + source;
+              break;
+            }
+          }
+
+          shaderBytes = bytebuf(source.toUtf8());
+        }
+        else
+        {
+          // we don't accept this encoding directly, need to compile
           for(const ShaderProcessingTool &tool : m_Ctx.Config().ShaderProcessors)
           {
             // pick the first tool that can convert to an accepted format
             if(tool.input == encoding && supported.contains(tool.output))
             {
+              // apply any prefix needed
+              for(const ShaderSourcePrefix &prefix : prefixes)
+              {
+                if(prefix.encoding == encoding)
+                {
+                  source = QString(prefix.prefix) + source;
+                  break;
+                }
+              }
+
               ShaderToolOutput out =
                   tool.CompileShader(this, source, "main", ShaderStage::Pixel, "");
 

@@ -42,15 +42,39 @@ class ShaderVariableCheck:
     def value(self, value_: list):
         count = len(value_)
         if isinstance(value_[0], float):
-            if list(self.var.value.f32v[0:count]) != list(value_):
+            vals = []
+            if self.var.type == rd.VarType.Float:
+                vals = list(self.var.value.f32v[0:count])
+            elif self.var.type == rd.VarType.Double:
+                vals = list(self.var.value.f64v[0:count])
+            elif self.var.type == rd.VarType.Half:
+                vals = list(self.var.value.f16v[0:count])
+
+            if vals != list(value_):
                 raise TestFailureException("Float variable {} value mismatch, expected {} but got {}"
                                            .format(self.var.name, value_, self.var.value.f32v[0:count]))
         else:
-            # hack - check signed and unsigned values
-            if list(self.var.value.s32v[0:count] ) != list(value_) and list(self.var.value.u32v[0:count]) != list(value_):
-                raise TestFailureException("Int variable {} value mismatch, expected {} but got {} / {}"
-                                           .format(self.var.name, value_, self.var.value.s32v[0:count],
-                                                   self.var.value.u32v[0:count]))
+            vals = []
+            if self.var.type == rd.VarType.UInt or self.var.type == rd.VarType.Bool:
+                vals = list(self.var.value.u32v[0:count])
+            elif self.var.type == rd.VarType.ULong:
+                vals = list(self.var.value.u64v[0:count])
+            elif self.var.type == rd.VarType.UShort:
+                vals = list(self.var.value.u16v[0:count])
+            elif self.var.type == rd.VarType.UByte:
+                vals = list(self.var.value.u8v[0:count])
+            elif self.var.type == rd.VarType.SInt:
+                vals = list(self.var.value.s32v[0:count])
+            elif self.var.type == rd.VarType.SLong:
+                vals = list(self.var.value.s64v[0:count])
+            elif self.var.type == rd.VarType.SShort:
+                vals = list(self.var.value.s16v[0:count])
+            elif self.var.type == rd.VarType.SByte:
+                vals = list(self.var.value.s8v[0:count])
+
+            if vals != list(value_):
+                raise TestFailureException("Int variable {} value mismatch, expected {} but got {}"
+                                           .format(self.var.name, value_, vals))
 
         return self
 
@@ -70,15 +94,15 @@ class ShaderVariableCheck:
         return self
 
     def row_major(self):
-        if not self.var.rowMajor:
+        if not self.var.RowMajor():
             raise TestFailureException("Variable {} is not row-major, as expected"
                                        .format(self.var.name))
 
         return self
 
     def column_major(self):
-        if self.var.rowMajor:
-            raise TestFailureException("Variable {} is not row-major, as expected"
+        if not self.var.ColMajor():
+            raise TestFailureException("Variable {} is not column-major, as expected"
                                        .format(self.var.name))
 
         return self
@@ -91,7 +115,7 @@ class ShaderVariableCheck:
         return self
 
     def structSize(self, elements_: int):
-        if not self.var.isStruct:
+        if not self.var.type == rd.VarType.Struct:
             raise TestFailureException("Variable {} is not a struct as was expected"
                                        .format(self.var.name))
 
@@ -639,7 +663,7 @@ class TestCase:
         f32v = [0.0] * 16
         for i, debugVarPath in enumerate(sourceVar.variables):
             debugVar = self.get_debug_var(debugVars, debugVarPath.name)
-            debugged.rowMajor = debugVar.rowMajor
+            debugged.flags = debugVar.flags
             f32v[i] = debugVar.value.f32v[debugVarPath.component]
         debugged.value.f32v = f32v
         return debugged
@@ -695,9 +719,9 @@ class TestCase:
                     v.name = v.name[len(base):]
                     if v.name[0] == '.':
                         v.name = v.name[1:]
-                        combined.isStruct = True
+                        combined.type = rd.VarType.Struct
                     if check == base + '.':
-                        combined.isStruct = True
+                        combined.type = rd.VarType.Struct
                     members.append(vars[i])
 
             if not bare_array:
@@ -718,9 +742,9 @@ class TestCase:
         conv_path = util.get_tmp_path('conv.rdc')
 
         origrdc = rd.OpenCaptureFile()
-        status = origrdc.OpenFile(capture_filename, '', None)
+        result = origrdc.OpenFile(capture_filename, '', None)
 
-        self.check(status == rd.ReplayStatus.Succeeded, "Couldn't open '{}': {}".format(capture_filename, str(status)))
+        self.check(result == rd.ResultCode.Succeeded, "Couldn't open '{}': {}".format(capture_filename, str(result)))
 
         # Export to rdc, to recompress
         origrdc.Convert(recomp_path, '', None, None)
@@ -730,9 +754,9 @@ class TestCase:
 
         # Load up the zip.xml file
         zipxml = rd.OpenCaptureFile()
-        status = zipxml.OpenFile(conv_zipxml_path, 'zip.xml', None)
+        result = zipxml.OpenFile(conv_zipxml_path, 'zip.xml', None)
 
-        self.check(status == rd.ReplayStatus.Succeeded, "Couldn't open '{}': {}".format(conv_zipxml_path, str(status)))
+        self.check(result == rd.ResultCode.Succeeded, "Couldn't open '{}': {}".format(conv_zipxml_path, str(result)))
 
         # Convert out to rdc
         zipxml.Convert(conv_path, '', None, None)

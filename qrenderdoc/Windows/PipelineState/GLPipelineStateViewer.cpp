@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1298,8 +1298,8 @@ GLPipelineStateViewer::GLReadWriteType GLPipelineStateViewer::GetGLReadWriteType
   }
   else
   {
-    if(res.variableType.descriptor.rows == 1 && res.variableType.descriptor.columns == 1 &&
-       res.variableType.descriptor.type == VarType::UInt)
+    if(res.variableType.rows == 1 && res.variableType.columns == 1 &&
+       res.variableType.baseType == VarType::UInt)
     {
       ret = GLReadWriteType::Atomic;
     }
@@ -2315,7 +2315,9 @@ void GLPipelineStateViewer::resource_itemActivated(RDTreeWidgetItem *item, int c
     if(!shaderRes)
       return;
 
-    QString format = BufferFormatter::GetBufferFormatString(*shaderRes, ResourceFormat(), buf.offset);
+    QString format = BufferFormatter::GetBufferFormatString(
+        BufferFormatter::EstimatePackingRules(shaderRes->variableType.members), *shaderRes,
+        ResourceFormat());
 
     if(buf.ID != ResourceId())
     {
@@ -2340,7 +2342,7 @@ void GLPipelineStateViewer::ubo_itemActivated(RDTreeWidgetItem *item, int column
 
   int cb = tag.value<int>();
 
-  IConstantBufferPreviewer *prev = m_Ctx.ViewConstantBuffer(stage->stage, cb, 0);
+  IBufferViewer *prev = m_Ctx.ViewConstantBuffer(stage->stage, cb, 0);
 
   m_Ctx.AddDockWindow(prev->Widget(), DockReference::TransientPopupArea, this, 0.3f);
 }

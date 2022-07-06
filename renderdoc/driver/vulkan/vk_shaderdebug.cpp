@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2021 Baldur Karlsson
+ * Copyright (c) 2020-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -165,21 +165,26 @@ public:
 
     const VulkanCreationInfo::Pipeline &pipe =
         m_Creation.m_Pipeline[compute ? state.compute.pipeline : state.graphics.pipeline];
-    const VulkanCreationInfo::PipelineLayout &pipeLayout = m_Creation.m_PipelineLayout[pipe.layout];
 
-    for(const VkPushConstantRange &range : pipeLayout.pushRanges)
     {
-      if(range.stageFlags & stage)
+      // don't have to handle separate vert/frag layouts as push constant ranges must be identical
+      const VulkanCreationInfo::PipelineLayout &pipeLayout =
+          m_Creation.m_PipelineLayout[compute ? pipe.compLayout : pipe.vertLayout];
+
+      for(const VkPushConstantRange &range : pipeLayout.pushRanges)
       {
-        pushData.resize(RDCMAX((uint32_t)pushData.size(), range.offset + range.size));
+        if(range.stageFlags & stage)
+        {
+          pushData.resize(RDCMAX((uint32_t)pushData.size(), range.offset + range.size));
 
-        RDCASSERT(range.offset + range.size < sizeof(state.pushconsts));
+          RDCASSERT(range.offset + range.size < sizeof(state.pushconsts));
 
-        memcpy(pushData.data() + range.offset, state.pushconsts + range.offset, range.size);
+          memcpy(pushData.data() + range.offset, state.pushconsts + range.offset, range.size);
+        }
       }
     }
 
-    m_DescSets.resize(RDCMIN(descSets.size(), pipeLayout.descSetLayouts.size()));
+    m_DescSets.resize(RDCMIN(descSets.size(), pipe.descSetLayouts.size()));
     for(size_t set = 0; set < m_DescSets.size(); set++)
     {
       uint32_t dynamicOffset = 0;
@@ -187,6 +192,12 @@ public:
       // skip invalid descriptor set binds, we assume these aren't present because they will not be
       // accessed statically
       if(descSets[set].descSet == ResourceId() || descSets[set].pipeLayout == ResourceId())
+        continue;
+
+      const VulkanCreationInfo::PipelineLayout &pipeLayoutInfo =
+          m_Creation.m_PipelineLayout[descSets[set].pipeLayout];
+
+      if(pipeLayoutInfo.descSetLayouts[set] == ResourceId())
         continue;
 
       DescSetSnapshot &dstSet = m_DescSets[set];
@@ -202,9 +213,7 @@ public:
       // set bind time must have been compatible and valid so we can use it. If this set *is* used
       // then the pipeline layout at bind time must be compatible with the pipeline's pipeline
       // layout, so we're fine too.
-      const DescSetLayout &setLayout =
-          m_Creation
-              .m_DescSetLayout[m_Creation.m_PipelineLayout[descSets[set].pipeLayout].descSetLayouts[set]];
+      const DescSetLayout &setLayout = m_Creation.m_DescSetLayout[pipeLayoutInfo.descSetLayouts[set]];
 
       for(size_t bind = 0; bind < setLayout.bindings.size(); bind++)
       {
@@ -677,6 +686,8 @@ public:
     const VulkanCreationInfo::ImageView &viewProps = m_Creation.m_ImageView[GetResID(view)];
     const VulkanCreationInfo::Image &imageProps = m_Creation.m_Image[viewProps.image];
 
+    const bool depthTex = IsDepthOrStencilFormat(viewProps.format);
+
     VkDevice dev = m_pDriver->GetDev();
 
     // how many co-ordinates should there be
@@ -831,12 +842,8 @@ public:
     {
       const ShaderVariable &biasVar = lane.GetSrc(operands.bias);
 
-      float bias = biasVar.value.f32v[0];
       // silently cast parameters to 32-bit floats
-      if(biasVar.type == VarType::Half)
-        bias = ConvertFromHalf(biasVar.value.u16v[0]);
-      else if(biasVar.type == VarType::Double)
-        bias = (float)biasVar.value.f64v[0];
+      float bias = floatComp(biasVar, 0);
 
       if(bias != 0.0f)
       {
@@ -1001,24 +1008,11 @@ public:
       case rdcspv::Op::ImageDrefGather:
       {
         // silently cast parameters to 32-bit floats
-        if(uv.type == VarType::Float)
-        {
-          for(int i = 0; i < coords; i++)
-            uniformParams.uvwa[i] = uv.value.f32v[i];
-        }
-        else if(uv.type == VarType::Half)
-        {
-          for(int i = 0; i < coords; i++)
-            uniformParams.uvwa[i] = ConvertFromHalf(uv.value.u16v[i]);
-        }
-        else if(uv.type == VarType::Double)
-        {
-          for(int i = 0; i < coords; i++)
-            uniformParams.uvwa[i] = (float)uv.value.f64v[i];
-        }
+        for(int i = 0; i < coords; i++)
+          uniformParams.uvwa[i] = floatComp(uv, i);
 
         if(useCompare)
-          uniformParams.compare = compare.value.f32v[0];
+          uniformParams.compare = floatComp(compare, 0);
 
         constParams.gatherChannel = gatherChannel;
 
@@ -1108,21 +1102,8 @@ public:
       case rdcspv::Op::ImageSampleProjDrefImplicitLod:
       {
         // silently cast parameters to 32-bit floats
-        if(uv.type == VarType::Float)
-        {
-          for(int i = 0; i < coords; i++)
-            uniformParams.uvwa[i] = uv.value.f32v[i];
-        }
-        else if(uv.type == VarType::Half)
-        {
-          for(int i = 0; i < coords; i++)
-            uniformParams.uvwa[i] = ConvertFromHalf(uv.value.u16v[i]);
-        }
-        else if(uv.type == VarType::Double)
-        {
-          for(int i = 0; i < coords; i++)
-            uniformParams.uvwa[i] = (float)uv.value.f64v[i];
-        }
+        for(int i = 0; i < coords; i++)
+          uniformParams.uvwa[i] = floatComp(uv, i);
 
         if(proj)
         {
@@ -1132,11 +1113,7 @@ public:
 
           // do the divide ourselves rather than severely complicating the sample shader (as proj
           // variants need non-arrayed textures)
-          float q = uv.value.f32v[coords];
-          if(uv.type == VarType::Half)
-            q = ConvertFromHalf(uv.value.u16v[coords]);
-          else if(uv.type == VarType::Double)
-            q = (float)uv.value.f64v[coords];
+          float q = floatComp(uv, coords);
 
           uniformParams.uvwa[0] /= q;
           uniformParams.uvwa[1] /= q;
@@ -1147,34 +1124,22 @@ public:
         {
           const ShaderVariable &minLodVar = lane.GetSrc(operands.minLod);
 
-          uniformParams.minlod = minLodVar.value.f32v[0];
           // silently cast parameters to 32-bit floats
-          if(minLodVar.type == VarType::Half)
-            uniformParams.minlod = ConvertFromHalf(minLodVar.value.u16v[0]);
-          else if(minLodVar.type == VarType::Double)
-            uniformParams.minlod = (float)minLodVar.value.f64v[0];
+          uniformParams.minlod = floatComp(minLodVar, 0);
         }
 
         if(useCompare)
         {
-          uniformParams.compare = compare.value.f32v[0];
           // silently cast parameters to 32-bit floats
-          if(compare.type == VarType::Half)
-            uniformParams.compare = ConvertFromHalf(compare.value.u16v[0]);
-          else if(compare.type == VarType::Double)
-            uniformParams.compare = (float)compare.value.f64v[0];
+          uniformParams.compare = floatComp(compare, 0);
         }
 
         if(operands.flags & rdcspv::ImageOperands::Lod)
         {
           const ShaderVariable &lodVar = lane.GetSrc(operands.lod);
 
-          uniformParams.lod = lodVar.value.f32v[0];
           // silently cast parameters to 32-bit floats
-          if(lodVar.type == VarType::Half)
-            uniformParams.lod = ConvertFromHalf(lodVar.value.u16v[0]);
-          else if(lodVar.type == VarType::Double)
-            uniformParams.lod = (float)lodVar.value.f64v[0];
+          uniformParams.lod = floatComp(lodVar, 0);
           constParams.useGradOrGatherOffsets = VK_FALSE;
         }
         else if(operands.flags & rdcspv::ImageOperands::Grad)
@@ -1186,29 +1151,10 @@ public:
 
           // silently cast parameters to 32-bit floats
           RDCASSERTEQUAL(ddx.type, ddy.type);
-          if(ddx.type == VarType::Float)
+          for(int i = 0; i < gradCoords; i++)
           {
-            for(int i = 0; i < gradCoords; i++)
-            {
-              uniformParams.ddx[i] = ddx.value.f32v[i];
-              uniformParams.ddy[i] = ddy.value.f32v[i];
-            }
-          }
-          else if(ddx.type == VarType::Half)
-          {
-            for(int i = 0; i < gradCoords; i++)
-            {
-              uniformParams.ddx[i] = ConvertFromHalf(ddx.value.u16v[i]);
-              uniformParams.ddy[i] = ConvertFromHalf(ddy.value.u16v[i]);
-            }
-          }
-          else if(ddx.type == VarType::Double)
-          {
-            for(int i = 0; i < gradCoords; i++)
-            {
-              uniformParams.ddx[i] = (float)ddx.value.f64v[i];
-              uniformParams.ddy[i] = (float)ddy.value.f64v[i];
-            }
+            uniformParams.ddx[i] = floatComp(ddx, i);
+            uniformParams.ddy[i] = floatComp(ddy, i);
           }
         }
 
@@ -1220,29 +1166,10 @@ public:
 
           // silently cast parameters to 32-bit floats
           RDCASSERTEQUAL(ddxCalc.type, ddyCalc.type);
-          if(ddxCalc.type == VarType::Float)
+          for(int i = 0; i < gradCoords; i++)
           {
-            for(int i = 0; i < gradCoords; i++)
-            {
-              uniformParams.ddx[i] = ddxCalc.value.f32v[i];
-              uniformParams.ddy[i] = ddyCalc.value.f32v[i];
-            }
-          }
-          else if(ddxCalc.type == VarType::Half)
-          {
-            for(int i = 0; i < gradCoords; i++)
-            {
-              uniformParams.ddx[i] = ConvertFromHalf(ddxCalc.value.u16v[i]);
-              uniformParams.ddy[i] = ConvertFromHalf(ddyCalc.value.u16v[i]);
-            }
-          }
-          else if(ddxCalc.type == VarType::Double)
-          {
-            for(int i = 0; i < gradCoords; i++)
-            {
-              uniformParams.ddx[i] = (float)ddxCalc.value.f64v[i];
-              uniformParams.ddy[i] = (float)ddyCalc.value.f64v[i];
-            }
+            uniformParams.ddx[i] = floatComp(ddxCalc, i);
+            uniformParams.ddy[i] = floatComp(ddyCalc, i);
           }
         }
 
@@ -1308,7 +1235,7 @@ public:
                             uniformParams.offset.x, uniformParams.offset.y, uniformParams.offset.z));
     }
 
-    VkPipeline pipe = MakePipe(constParams, 32, uintTex, sintTex);
+    VkPipeline pipe = MakePipe(constParams, 32, depthTex, uintTex, sintTex);
 
     if(pipe == VK_NULL_HANDLE)
     {
@@ -1350,13 +1277,36 @@ public:
     }
 
     // reset descriptor sets to dummy state
-    uint32_t resetIndex = 0;
-    if(uintTex)
-      resetIndex = 1;
-    else if(sintTex)
-      resetIndex = 2;
-    ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev), ARRAY_COUNT(m_DebugData.DummyWrites[resetIndex]),
-                                       m_DebugData.DummyWrites[resetIndex], 0, NULL);
+    if(depthTex)
+    {
+      // for depth not all descriptors are valid, in particular we skip 3D and cube
+      uint32_t resetIndex = 3;
+
+      rdcarray<VkWriteDescriptorSet> writes;
+
+      for(size_t i = 0; i < ARRAY_COUNT(m_DebugData.DummyWrites[resetIndex]); i++)
+      {
+        if(m_DebugData.DummyWrites[resetIndex][i].dstBinding != (uint32_t)ShaderDebugBind::Tex3D &&
+           m_DebugData.DummyWrites[resetIndex][i].dstBinding != (uint32_t)ShaderDebugBind::TexCube &&
+           m_DebugData.DummyWrites[resetIndex][i].dstBinding != (uint32_t)ShaderDebugBind::Buffer)
+          writes.push_back(m_DebugData.DummyWrites[resetIndex][i]);
+      }
+
+      ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev), (uint32_t)writes.count(), writes.data(), 0,
+                                         NULL);
+    }
+    else
+    {
+      uint32_t resetIndex = 0;
+      if(uintTex)
+        resetIndex = 1;
+      else if(sintTex)
+        resetIndex = 2;
+
+      ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev),
+                                         ARRAY_COUNT(m_DebugData.DummyWrites[resetIndex]),
+                                         m_DebugData.DummyWrites[resetIndex], 0, NULL);
+    }
 
     // overwrite with our data
     ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev), sampler != VK_NULL_HANDLE ? 3 : 2, writeSets, 0,
@@ -1446,20 +1396,8 @@ public:
       return false;
 
     // convert float results, we did all sampling at 32-bit precision
-    if(output.type == VarType::Half)
-    {
-      for(uint8_t c = 0; c < 4; c++)
-        output.value.u16v[c] = ConvertToHalf(ret[c]);
-    }
-    else if(output.type == VarType::Double)
-    {
-      for(uint8_t c = 0; c < 4; c++)
-        output.value.f64v[c] = ret[c];
-    }
-    else
-    {
-      memcpy(output.value.u32v.data(), ret, sizeof(Vec4f));
-    }
+    for(uint8_t c = 0; c < 4; c++)
+      setFloatComp(output, c, ret[c]);
 
     m_DebugData.ReadbackBuffer.Unmap();
 
@@ -1482,7 +1420,7 @@ public:
       ShaderConstParameters pipeParams = {};
       pipeParams.operation = (uint32_t)rdcspv::Op::ExtInst;
       m_DebugData.MathPipe[floatSizeIdx] =
-          MakePipe(pipeParams, VarTypeByteSize(params[0].type) * 8, false, false);
+          MakePipe(pipeParams, VarTypeByteSize(params[0].type) * 8, false, false, false);
 
       if(m_DebugData.MathPipe[floatSizeIdx] == VK_NULL_HANDLE)
       {
@@ -1821,8 +1759,8 @@ private:
     return data;
   }
 
-  VkPipeline MakePipe(const ShaderConstParameters &params, uint32_t floatBitSize, bool uintTex,
-                      bool sintTex)
+  VkPipeline MakePipe(const ShaderConstParameters &params, uint32_t floatBitSize, bool depthTex,
+                      bool uintTex, bool sintTex)
   {
     VkSpecializationMapEntry specMaps[sizeof(params) / sizeof(uint32_t)];
     for(size_t i = 0; i < ARRAY_COUNT(specMaps); i++)
@@ -1839,18 +1777,20 @@ private:
     specInfo.pMapEntries = specMaps;
 
     uint32_t shaderIndex = 0;
-    if(uintTex)
+    if(depthTex)
       shaderIndex = 1;
-    else if(sintTex)
+    if(uintTex)
       shaderIndex = 2;
+    else if(sintTex)
+      shaderIndex = 3;
 
     if(params.operation == (uint32_t)rdcspv::Op::ExtInst)
     {
-      shaderIndex = 3;
+      shaderIndex = 4;
       if(floatBitSize == 16)
-        shaderIndex = 4;
-      else if(floatBitSize == 64)
         shaderIndex = 5;
+      else if(floatBitSize == 64)
+        shaderIndex = 6;
     }
 
     if(m_DebugData.Module[shaderIndex] == VK_NULL_HANDLE)
@@ -1865,7 +1805,7 @@ private:
       {
         RDCASSERTMSG("Assume sampling happens with 32-bit float inputs", floatBitSize == 32,
                      floatBitSize);
-        GenerateSamplingShaderModule(spirv, uintTex, sintTex);
+        GenerateSamplingShaderModule(spirv, depthTex, uintTex, sintTex);
       }
 
       VkShaderModuleCreateInfo moduleCreateInfo = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -1877,8 +1817,9 @@ private:
       m_pDriver->CheckVkResult(vkr);
 
       const char *filename[] = {
-          "/debug_psgather_float.spv", "/debug_psgather_uint.spv", "/debug_psgather_sint.spv",
-          "/debug_psmath32.spv",       "/debug_psmath16.spv",      "/debug_psmath64.spv",
+          "/debug_psgather_float.spv", "/debug_psgather_depth.spv", "/debug_psgather_uint.spv",
+          "/debug_psgather_sint.spv",  "/debug_psmath32.spv",       "/debug_psmath16.spv",
+          "/debug_psmath64.spv",
       };
 
       if(!Vulkan_Debug_PSDebugDumpDirPath().empty())
@@ -2269,7 +2210,8 @@ private:
     editor.AddFunction(func);
   }
 
-  void GenerateSamplingShaderModule(rdcarray<uint32_t> &spirv, bool uintTex, bool sintTex)
+  void GenerateSamplingShaderModule(rdcarray<uint32_t> &spirv, bool depthTex, bool uintTex,
+                                    bool sintTex)
   {
     // this could be done as a glsl shader, but glslang has some bugs compiling the specialisation
     // constants, so we generate it by hand - which isn't too hard
@@ -2455,6 +2397,9 @@ private:
     {
       rdcspv::StorageClass storageClass = rdcspv::StorageClass::UniformConstant;
 
+      if(depthTex && (i == (size_t)ShaderDebugBind::Tex3D || i == (size_t)ShaderDebugBind::TexCube))
+        continue;
+
       if(i == (size_t)ShaderDebugBind::Constants)
         storageClass = rdcspv::StorageClass::Uniform;
 
@@ -2470,9 +2415,11 @@ private:
 
     editor.SetName(bindVars[(size_t)ShaderDebugBind::Tex1D], "Tex1D");
     editor.SetName(bindVars[(size_t)ShaderDebugBind::Tex2D], "Tex2D");
-    editor.SetName(bindVars[(size_t)ShaderDebugBind::Tex3D], "Tex3D");
+    if(!depthTex)
+      editor.SetName(bindVars[(size_t)ShaderDebugBind::Tex3D], "Tex3D");
     editor.SetName(bindVars[(size_t)ShaderDebugBind::Tex2DMS], "Tex2DMS");
-    editor.SetName(bindVars[(size_t)ShaderDebugBind::TexCube], "TexCube");
+    if(!depthTex)
+      editor.SetName(bindVars[(size_t)ShaderDebugBind::TexCube], "TexCube");
     editor.SetName(bindVars[(size_t)ShaderDebugBind::Buffer], "Buffer");
     editor.SetName(bindVars[(size_t)ShaderDebugBind::Sampler], "Sampler");
     editor.SetName(bindVars[(size_t)ShaderDebugBind::Constants], "CBuffer");
@@ -2641,6 +2588,9 @@ private:
       if(i == sampIdx || i == (uint32_t)ShaderDebugBind::Constants)
         continue;
 
+      if(depthTex && (i == (size_t)ShaderDebugBind::Tex3D || i == (size_t)ShaderDebugBind::TexCube))
+        continue;
+
       // can't fetch from cubemaps
       if(i != (uint32_t)ShaderDebugBind::TexCube)
       {
@@ -2755,14 +2705,22 @@ private:
         cases.add(rdcspv::OpBranch(breakLabel));
       }
 
-      bool emitDRef = true;
-
       // on Qualcomm we only emit Dref instructions against 2D textures, otherwise the compiler may
       // crash.
       if(m_pDriver->GetDriverInfo().QualcommDrefNon2DCompileCrash())
-        emitDRef = (i == (uint32_t)ShaderDebugBind::Tex2D);
+        depthTex &= (i == (uint32_t)ShaderDebugBind::Tex2D);
 
-      if(emitDRef)
+      // VUID-StandaloneSpirv-OpImage-04777
+      // OpImage*Dref must not consume an image whose Dim is 3D
+      // also skip cube
+      if(i == (uint32_t)ShaderDebugBind::Tex3D || i == (uint32_t)ShaderDebugBind::TexCube)
+        depthTex = false;
+
+      // don't emit dref's for uint/sint textures
+      if(uintTex || sintTex)
+        depthTex = false;
+
+      if(depthTex)
       {
         for(rdcspv::Op op :
             {rdcspv::Op::ImageSampleDrefExplicitLod, rdcspv::Op::ImageSampleDrefImplicitLod})
@@ -2830,6 +2788,9 @@ private:
 
       for(rdcspv::Op op : {rdcspv::Op::ImageGather, rdcspv::Op::ImageDrefGather})
       {
+        if(op == rdcspv::Op::ImageDrefGather && !depthTex)
+          continue;
+
         rdcspv::Id label = editor.MakeId();
         targets.push_back({(uint32_t)op * 10 + i, label});
 
@@ -3928,7 +3889,7 @@ ShaderDebugTrace *VulkanReplay::DebugVertex(uint32_t eventId, uint32_t vertid, u
   builtins[ShaderBuiltin::ViewportIndex] = ShaderVariable(rdcstr(), view, 0U, 0U, 0U);
 
   rdcarray<ShaderVariable> &locations = apiWrapper->location_inputs;
-  for(const VulkanCreationInfo::Pipeline::Attribute &attr : pipe.vertexAttrs)
+  for(const VkVertexInputAttributeDescription2EXT &attr : state.vertexAttributes)
   {
     locations.resize_for_index(attr.location);
 
@@ -3943,14 +3904,14 @@ ShaderDebugTrace *VulkanReplay::DebugVertex(uint32_t eventId, uint32_t vertid, u
 
     bool found = false;
 
-    for(const VulkanCreationInfo::Pipeline::VertBinding &bind : pipe.vertexBindings)
+    for(const VkVertexInputBindingDescription2EXT &bind : state.vertexBindings)
     {
-      if(bind.vbufferBinding != attr.binding)
+      if(bind.binding != attr.binding)
         continue;
 
-      if(bind.vbufferBinding < state.vbuffers.size())
+      if(bind.binding < state.vbuffers.size())
       {
-        const VulkanRenderState::VertBuffer &vb = state.vbuffers[bind.vbufferBinding];
+        const VulkanRenderState::VertBuffer &vb = state.vbuffers[bind.binding];
 
         if(vb.buf != ResourceId())
         {
@@ -3958,12 +3919,12 @@ ShaderDebugTrace *VulkanReplay::DebugVertex(uint32_t eventId, uint32_t vertid, u
 
           found = true;
 
-          if(bind.perInstance)
+          if(bind.inputRate == VK_VERTEX_INPUT_RATE_INSTANCE)
           {
-            if(bind.instanceDivisor == 0)
+            if(bind.divisor == 0)
               vertexOffset = instOffset * vb.stride;
             else
-              vertexOffset = (instOffset + (instid / bind.instanceDivisor)) * vb.stride;
+              vertexOffset = (instOffset + (instid / bind.divisor)) * vb.stride;
           }
           else
           {
@@ -3973,17 +3934,17 @@ ShaderDebugTrace *VulkanReplay::DebugVertex(uint32_t eventId, uint32_t vertid, u
           if(Vulkan_Debug_ShaderDebugLogging())
           {
             RDCLOG("Fetching from %s at %llu offset %zu bytes", ToStr(vb.buf).c_str(),
-                   vb.offs + attr.byteoffset + vertexOffset, size);
+                   vb.offs + attr.offset + vertexOffset, size);
           }
 
-          if(attr.byteoffset + vertexOffset < vb.size)
-            GetDebugManager()->GetBufferData(vb.buf, vb.offs + attr.byteoffset + vertexOffset, size,
+          if(attr.offset + vertexOffset < vb.size)
+            GetDebugManager()->GetBufferData(vb.buf, vb.offs + attr.offset + vertexOffset, size,
                                              data);
         }
       }
       else if(Vulkan_Debug_ShaderDebugLogging())
       {
-        RDCLOG("Vertex binding %u out of bounds from %zu vertex buffers", bind.vbufferBinding,
+        RDCLOG("Vertex binding %u out of bounds from %zu vertex buffers", bind.binding,
                state.vbuffers.size());
       }
     }
@@ -4352,7 +4313,8 @@ ShaderDebugTrace *VulkanReplay::DebugPixel(uint32_t eventId, uint32_t x, uint32_
     }
 
     // create pipeline layout with new descriptor set layouts
-    const rdcarray<VkPushConstantRange> &push = c.m_PipelineLayout[pipe.layout].pushRanges;
+    // don't have to handle separate vert/frag layouts as push constant ranges must be identical
+    const rdcarray<VkPushConstantRange> &push = c.m_PipelineLayout[pipe.vertLayout].pushRanges;
 
     VkPipelineLayoutCreateInfo pipeLayoutInfo = {
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -4514,6 +4476,9 @@ ShaderDebugTrace *VulkanReplay::DebugPixel(uint32_t eventId, uint32_t x, uint32_
       modifiedstate.graphics.descSets[i].descSet = GetResID(descSets[i]);
     }
   }
+
+  modifiedstate.subpassContents = VK_SUBPASS_CONTENTS_INLINE;
+  modifiedstate.dynamicRendering.flags &= VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
 
   {
     VkCommandBuffer cmd = m_pDriver->GetNextCmd();

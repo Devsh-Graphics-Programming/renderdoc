@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -245,5 +245,24 @@ cbuffer HistogramCBufferData REG(b0)
 #define FLOAT_TEX 1
 #define UINT_TEX 0
 #define SINT_TEX 0
+
+#endif
+
+#if defined(__cplusplus)
+
+struct RD_CustomShader_CBuffer_Type
+{
+  uint4 TexDim;
+  uint SelectedMip;
+  uint TextureType;
+  uint SelectedSliceFace;
+  int SelectedSample;
+  uint4 YUVDownsampleRate;
+  uint4 YUVAChannels;
+  float2 SelectedRange;
+};
+
+// move to an #include since fxc barfs on it
+#include "hlsl_custom_prefix.h"
 
 #endif

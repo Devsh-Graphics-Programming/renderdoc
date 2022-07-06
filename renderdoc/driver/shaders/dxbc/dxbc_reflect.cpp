@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,58 +31,95 @@
 static ShaderConstant MakeConstantBufferVariable(bool cbufferPacking,
                                                  const DXBC::CBufferVariable &var);
 
+static void FixupEmptyStructs(rdcarray<ShaderConstant> &members)
+{
+  for(size_t i = 0; i < members.size(); i++)
+  {
+    if(members[i].byteOffset == ~0U)
+    {
+      // don't try to calculate offset for trailing empty structs, just delete them
+      if(i == members.size() - 1)
+        members.pop_back();
+      // other empty struct members take the offset of the next member
+      else
+        members[i].byteOffset = members[i + 1].byteOffset;
+    }
+  }
+}
+
 static ShaderConstantType MakeShaderConstantType(bool cbufferPacking, DXBC::CBufferVariableType type)
 {
   ShaderConstantType ret;
 
-  ret.descriptor.type = type.descriptor.varType;
-  ret.descriptor.rows = (uint8_t)type.descriptor.rows;
-  ret.descriptor.columns = (uint8_t)type.descriptor.cols;
-  ret.descriptor.elements = type.descriptor.elements;
-  ret.descriptor.name = type.descriptor.name;
-  ret.descriptor.rowMajorStorage = (type.descriptor.varClass == DXBC::CLASS_MATRIX_ROWS ||
-                                    type.descriptor.varClass == DXBC::CLASS_VECTOR ||
-                                    type.descriptor.varClass == DXBC::CLASS_SCALAR);
+  ret.baseType = type.varType;
+  ret.rows = (uint8_t)type.rows;
+  ret.columns = (uint8_t)type.cols;
+  ret.elements = type.elements;
+  ret.name = type.name;
+  if(type.varClass == DXBC::CLASS_MATRIX_ROWS || type.varClass == DXBC::CLASS_VECTOR ||
+     type.varClass == DXBC::CLASS_SCALAR)
+    ret.flags |= ShaderVariableFlags::RowMajorMatrix;
 
-  uint32_t baseElemSize = (ret.descriptor.type == VarType::Double) ? 8 : 4;
+  uint32_t baseElemSize = (ret.baseType == VarType::Double) ? 8 : 4;
 
   // in D3D matrices in cbuffers always take up a float4 per row/column. Structured buffers in
   // SRVs/UAVs are tightly packed
   if(cbufferPacking)
-    ret.descriptor.matrixByteStride = uint8_t(baseElemSize * 4);
+    ret.matrixByteStride = uint8_t(baseElemSize * 4);
   else
-    ret.descriptor.matrixByteStride =
-        uint8_t(baseElemSize *
-                (ret.descriptor.rowMajorStorage ? ret.descriptor.rows : ret.descriptor.columns));
+    ret.matrixByteStride = uint8_t(baseElemSize * (ret.RowMajor() ? ret.columns : ret.rows));
 
-  if(type.descriptor.varClass == DXBC::CLASS_STRUCT)
+  if(type.varClass == DXBC::CLASS_STRUCT)
   {
-    uint32_t stride = type.descriptor.bytesize / RDCMAX(1U, type.descriptor.elements);
+    // fxc's reported byte size for UAV structs is not reliable (booo). It seems to assume some
+    // padding that doesn't exist, especially in arrays. So e.g.:
+    // struct nested_with_padding
+    // {
+    //   float a; float4 b; float c; float3 d[4];
+    // };
+    // is tightly packed and only contains 1+4+1+4*3 floats = 18*4 = 72 bytes
+    // however an array of nested_with_padding foo[2] will have size listed as 176 bytes.
+    //
+    // fortunately, since packing is tight we can look at the 'columns' field which is the number of
+    // floats in the struct, and multiply that
+    uint32_t stride = type.bytesize / RDCMAX(1U, type.elements);
+    if(!cbufferPacking)
+    {
+      stride = type.cols * sizeof(float);
+      // the exception is empty structs have 1 cols, probably because of a max(1,...) somewhere
+      if(type.bytesize == 0)
+        stride = 0;
+    }
+
     RDCASSERTMSG("Stride is too large for uint16_t", stride <= 0xffff);
 
-    ret.descriptor.arrayByteStride = RDCMIN(stride, 0xffffu) & 0xffff;
+    ret.arrayByteStride = RDCMIN(stride, 0xffffu) & 0xffff;
     // in D3D only cbuffers have 16-byte aligned structs
     if(cbufferPacking)
-      ret.descriptor.arrayByteStride = AlignUp16(ret.descriptor.arrayByteStride);
+      ret.arrayByteStride = AlignUp16(ret.arrayByteStride);
 
-    ret.descriptor.rows = ret.descriptor.columns = 0;
+    ret.rows = ret.columns = 0;
+
+    ret.baseType = VarType::Struct;
   }
   else
   {
-    if(ret.descriptor.rowMajorStorage)
-      ret.descriptor.arrayByteStride = ret.descriptor.matrixByteStride * ret.descriptor.rows;
+    if(ret.RowMajor())
+      ret.arrayByteStride = ret.matrixByteStride * ret.rows;
     else
-      ret.descriptor.arrayByteStride = ret.descriptor.matrixByteStride * ret.descriptor.columns;
+      ret.arrayByteStride = ret.matrixByteStride * ret.columns;
   }
 
   ret.members.reserve(type.members.size());
   for(size_t i = 0; i < type.members.size(); i++)
     ret.members.push_back(MakeConstantBufferVariable(cbufferPacking, type.members[i]));
 
+  FixupEmptyStructs(ret.members);
+
   if(!ret.members.empty())
   {
-    ret.descriptor.rows = 0;
-    ret.descriptor.columns = 0;
+    ret.rows = 0;
+    ret.columns = 0;
   }
 
   return ret;
@@ -96,6 +133,11 @@ static ShaderConstant MakeConstantBufferVariable(bool cbufferPacking, const DXBC
   ret.byteOffset = var.offset;
   ret.defaultValue = 0;
   ret.type = MakeShaderConstantType(cbufferPacking, var.type);
+
+  // fxc emits negative values for offsets of empty structs sometimes. Replace that with a single
+  // value so we can say 'use the previous value'
+  if(ret.type.baseType == VarType::Struct && ret.type.members.empty() && ret.byteOffset > 0xF0000000)
+    ret.byteOffset = ~0U;
 
   return ret;
 }
@@ -146,17 +188,17 @@ static void MakeResourceList(bool srv, DXBC::DXBCContainer *dxbc,
     if(r.type == DXBC::ShaderInputBind::TYPE_BYTEADDRESS ||
        r.type == DXBC::ShaderInputBind::TYPE_UAV_RWBYTEADDRESS)
     {
-      res.variableType.descriptor.rows = res.variableType.descriptor.columns = 1;
-      res.variableType.descriptor.elements = 1;
-      res.variableType.descriptor.type = VarType::UByte;
-      res.variableType.descriptor.name = "byte";
+      res.variableType.rows = res.variableType.columns = 1;
+      res.variableType.elements = 1;
+      res.variableType.baseType = VarType::UByte;
+      res.variableType.name = "byte";
     }
     else if(r.retType != DXBC::RETURN_TYPE_UNKNOWN && r.retType != DXBC::RETURN_TYPE_MIXED &&
             r.retType != DXBC::RETURN_TYPE_CONTINUED)
     {
-      res.variableType.descriptor.rows = 1;
-      res.variableType.descriptor.columns = (uint8_t)r.numComps;
-      res.variableType.descriptor.elements = 1;
+      res.variableType.rows = 1;
+      res.variableType.columns = (uint8_t)r.numComps;
+      res.variableType.elements = 1;
 
       rdcstr name;
 
@@ -164,27 +206,27 @@ static void MakeResourceList(bool srv, DXBC::DXBCContainer *dxbc,
       {
         case DXBC::RETURN_TYPE_UNORM:
           name = "unorm float";
-          res.variableType.descriptor.type = VarType::Float;
+          res.variableType.baseType = VarType::Float;
           break;
         case DXBC::RETURN_TYPE_SNORM:
           name = "snorm float";
-          res.variableType.descriptor.type = VarType::Float;
+          res.variableType.baseType = VarType::Float;
           break;
         case DXBC::RETURN_TYPE_SINT:
           name = "int";
-          res.variableType.descriptor.type = VarType::SInt;
+          res.variableType.baseType = VarType::SInt;
           break;
         case DXBC::RETURN_TYPE_UINT:
           name = "uint";
-          res.variableType.descriptor.type = VarType::UInt;
+          res.variableType.baseType = VarType::UInt;
           break;
         case DXBC::RETURN_TYPE_FLOAT:
           name = "float";
-          res.variableType.descriptor.type = VarType::Float;
+          res.variableType.baseType = VarType::Float;
           break;
         case DXBC::RETURN_TYPE_DOUBLE:
           name = "double";
-          res.variableType.descriptor.type = VarType::Double;
+          res.variableType.baseType = VarType::Double;
           break;
         default: name = "unknown"; break;
       }
@@ -192,7 +234,7 @@ static void MakeResourceList(bool srv, DXBC::DXBCContainer *dxbc,
       if(r.numComps > 1)
         name += StringFormat::Fmt("%u", r.numComps);
 
-      res.variableType.descriptor.name = name;
+      res.variableType.name = name;
     }
     else
     {
@@ -203,10 +245,10 @@ static void MakeResourceList(bool srv, DXBC::DXBCContainer *dxbc,
       }
       else
       {
-        res.variableType.descriptor.rows = 0;
-        res.variableType.descriptor.columns = 0;
-        res.variableType.descriptor.elements = 0;
-        res.variableType.descriptor.name = "";
+        res.variableType.rows = 0;
+        res.variableType.columns = 0;
+        res.variableType.elements = 0;
+        res.variableType.name = "";
       }
     }
 
@@ -255,12 +297,7 @@ void MakeShaderReflection(DXBC::DXBCContainer *dxbc, ShaderReflection *refl,
 
     refl->debugInfo.compileFlags = dxbc->GetDebugInfo()->GetShaderCompileFlags();
 
-    refl->debugInfo.files.resize(dxbc->GetDebugInfo()->Files.size());
-    for(size_t i = 0; i < dxbc->GetDebugInfo()->Files.size(); i++)
-    {
-      refl->debugInfo.files[i].filename = dxbc->GetDebugInfo()->Files[i].first;
-      refl->debugInfo.files[i].contents = dxbc->GetDebugInfo()->Files[i].second;
-    }
+    refl->debugInfo.files = dxbc->GetDebugInfo()->Files;
 
     rdcstr entry = dxbc->GetDebugInfo()->GetEntryFunction();
     if(entry.empty())
@@ -343,6 +380,8 @@ void MakeShaderReflection(DXBC::DXBCContainer *dxbc, ShaderReflection *refl,
       cb.variables.push_back(
           MakeConstantBufferVariable(true, dxbc->GetReflection()->CBuffers[i].variables[v]));
     }
+
+    FixupEmptyStructs(cb.variables);
   }
 
   mapping->samplers.resize(dxbc->GetReflection()->Samplers.size());

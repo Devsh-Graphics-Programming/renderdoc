@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -132,8 +132,6 @@ enum class SectionType : uint32_t
 ITERABLE_OPERATORS(SectionType);
 DECLARE_REFLECTION_ENUM(SectionType);
 
-// replay_shader.h
-
 DOCUMENT(R"(Represents the category of debugging variable that a source variable maps to.
 
 .. data:: Undefined
@@ -227,6 +225,14 @@ DOCUMENT(R"(Represents the base type of a shader variable in debugging or consta
 
   A boolean value.
 
+.. data:: Enum
+
+  An enum - each member gives a named value, and the type itself is stored as an integer.
+
+.. data:: Struct
+
+  A structure with some number of members.
+
 .. data:: GPUPointer
 
   A 64-bit pointer into GPU-addressable memory. Variables with this type are stored with opaque
@@ -270,6 +276,8 @@ enum class VarType : uint8_t
   SByte,
   UByte,
   Bool,
+  Enum,
+  Struct,
   GPUPointer,
   ConstantBlock,
   ReadOnlyResource,
@@ -293,7 +301,7 @@ constexpr uint32_t VarTypeByteSize(VarType type)
   // clang-format off
   return (type == VarType::UByte  || type == VarType::SByte) ? 1
        : (type == VarType::Half   || type == VarType::UShort || type == VarType::SShort) ? 2
-       : (type == VarType::Float  || type == VarType::UInt   || type == VarType::SInt   || type == VarType::Bool) ? 4
+       : (type == VarType::Float  || type == VarType::UInt   || type == VarType::SInt   || type == VarType::Bool || type == VarType::Enum) ? 4
        : (type == VarType::Double || type == VarType::ULong  || type == VarType::SLong ) ? 8
        : 0;
   // clang-format on
@@ -385,8 +393,8 @@ constexpr CompType VarTypeCompType(VarType type)
   // clang-format off
   return (type == VarType::Double || type == VarType::Float  || type == VarType::Half) ? CompType::Float
 
-       : (type == VarType::ULong  || type == VarType::UInt   ||
-          type == VarType::UShort || type == VarType::UByte  || type == VarType::Bool) ? CompType::UInt
+       : (type == VarType::ULong  || type == VarType::UInt   || type == VarType::UShort ||
+          type == VarType::UByte  || type == VarType::Bool   || type == VarType::Enum) ? CompType::UInt
 
        : (type == VarType::SLong  || type == VarType::SInt   ||
           type == VarType::SShort || type == VarType::SByte) ? CompType::SInt
@@ -1152,8 +1160,6 @@ enum class ShaderBuiltin : uint32_t
 
 ITERABLE_OPERATORS(ShaderBuiltin);
 DECLARE_REFLECTION_ENUM(ShaderBuiltin);
-
-// replay_render.h
 
 DOCUMENT(R"(The type of :class:`ReplayOutput` to create
 
@@ -3552,7 +3558,7 @@ enum class ReplaySupport : uint32_t
 
 DECLARE_REFLECTION_ENUM(ReplaySupport);
 
-DOCUMENT(R"(The status of a high-level replay operation such as opening a capture or connecting to
+DOCUMENT(R"(The result from a replay operation such as opening a capture or connecting to
 a remote server.
 
 .. data:: Succeeded
@@ -3605,7 +3611,7 @@ a remote server.
 
 .. data:: ImageUnsupported
 
-  The image file is recognised but the format is unsupported.
+  The image file or format is unrecognised or not supported in this form.
 
 .. data:: APIUnsupported
 
@@ -3621,7 +3627,7 @@ a remote server.
 
 .. data:: APIHardwareUnsupported
 
-  The API is not supported on the currently available hardware.
+  Current replaying hardware unsupported or incompatible with captured hardware.
 
 .. data:: APIDataCorrupted
 
@@ -3663,13 +3669,25 @@ a remote server.
 
 .. data:: ReplayOutOfMemory
 
-  While replaying, a GPU out of memory error was encountered.
+  While replaying, an out of memory error was encountered.
 
 .. data:: ReplayDeviceLost
 
   While replaying a device lost fatal error was encountered.
+
+.. data:: DataNotAvailable
+
+  Data was requested through RenderDoc's API which is not available.
+
+.. data:: InvalidParameter
+
+  An invalid parameter was passed to RenderDoc's API.
+
+.. data:: CompressionFailed
+
+  Compression or decompression failed.
 )");
-enum class ReplayStatus : uint32_t
+enum class ResultCode : uint32_t
 {
   Succeeded = 0,
   UnknownError,
@@ -3699,9 +3717,16 @@ enum class ReplayStatus : uint32_t
   RemoteServerConnectionLost,
   ReplayOutOfMemory,
   ReplayDeviceLost,
+  DataNotAvailable,
+  InvalidParameter,
+  CompressionFailed,
 };
 
-DECLARE_REFLECTION_ENUM(ReplayStatus);
+DECLARE_REFLECTION_ENUM(ResultCode);
+// need to forward declare this explicitly since ResultCode can be instantiated early in places
+// where we're going to later explicitly instantiate it to define it
+template <>
+rdcstr DoStringise(const ResultCode &el);
 
 DOCUMENT(R"(The type of message received from or sent to an application target control connection.
 
@@ -4245,6 +4270,68 @@ enum class ShaderEvents : uint32_t
 
 BITMASK_OPERATORS(ShaderEvents);
 DECLARE_REFLECTION_ENUM(ShaderEvents);
+
+DOCUMENT(R"(A set of flags for events that control how a shader/buffer value is interpreted and
+displayed
+
+.. data:: NoFlags
+
+  No flags are specified.
+
+.. data:: RowMajorMatrix
+
+  This matrix is stored in row-major order in memory, instead of column-major. In RenderDoc values
+  are always provided row-major regardless, for consistency of access, but if this flag is not
+  present then the original values were in column order in memory, so the data has been transposed.
+
+.. data:: HexDisplay
+
+  This value should be displayed using hexadecimal where possible.
+
+.. data:: BinaryDisplay
+
+  This value should be displayed using binary where possible.
+
+.. data:: RGBDisplay
+
+  This value should be interpreted as an RGB colour for display where possible.
+
+.. data:: R11G11B10
+
+  This value should be decoded from a 32-bit integer in R11G11B10 packing format.
+
+.. data:: R10G10B10A2
+
+  This value should be decoded from a 32-bit integer in R10G10B10A2 packing format.
+
+.. data:: UNorm
+
+  This value should be treated as unsigned normalised floating point values when interpreting.
+
+.. data:: SNorm
+
+  This value should be treated as signed normalised floating point values when interpreting.
+
+.. data:: Truncated
+
+  This value was truncated when reading - the available range was exhausted.
+)");
+enum class ShaderVariableFlags : uint32_t
+{
+  NoFlags = 0x0000,
+  RowMajorMatrix = 0x0001,
+  HexDisplay = 0x0002,
+  BinaryDisplay = 0x0004,
+  RGBDisplay = 0x0008,
+  R11G11B10 = 0x0010,
+  R10G10B10A2 = 0x0020,
+  UNorm = 0x0040,
+  SNorm = 0x0080,
+  Truncated = 0x0100,
+};
+
+BITMASK_OPERATORS(ShaderVariableFlags);
+DECLARE_REFLECTION_ENUM(ShaderVariableFlags);
 
 DOCUMENT(R"(A set of flags describing the properties of a particular action. An action is a call
 such as a draw, a compute dispatch, clears, copies, resolves, etc. Any GPU event which may have

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -85,20 +85,20 @@ struct VulkanQuadOverdrawCallback : public VulkanActionCallback
       VkDescriptorSetLayout *descSetLayouts;
 
       // descSet will be the index of our new descriptor set
-      uint32_t descSet =
-          (uint32_t)m_pDriver->GetDebugManager()->GetPipelineLayoutInfo(p.layout).descSetLayouts.size();
+      uint32_t descSet = (uint32_t)p.descSetLayouts.size();
 
       descSetLayouts = new VkDescriptorSetLayout[descSet + 1];
 
       for(uint32_t i = 0; i < descSet; i++)
         descSetLayouts[i] = m_pDriver->GetResourceManager()->GetCurrentHandle<VkDescriptorSetLayout>(
-            m_pDriver->GetDebugManager()->GetPipelineLayoutInfo(p.layout).descSetLayouts[i]);
+            p.descSetLayouts[i]);
 
       // this layout has storage image and
       descSetLayouts[descSet] = m_DescSetLayout;
 
+      // don't have to handle separate vert/frag layouts as push constant ranges must be identical
       const rdcarray<VkPushConstantRange> &push =
-          m_pDriver->GetDebugManager()->GetPipelineLayoutInfo(p.layout).pushRanges;
+          m_pDriver->GetDebugManager()->GetPipelineLayoutInfo(p.vertLayout).pushRanges;
 
       VkPipelineLayoutCreateInfo pipeLayoutInfo = {
           VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -267,6 +267,7 @@ struct VulkanQuadOverdrawCallback : public VulkanActionCallback
     // don't care
   }
   bool SplitSecondary() { return false; }
+  bool ForceLoadRPs() { return false; }
   void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
                      VkCommandBuffer cmd)
   {
@@ -601,6 +602,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
 
     vkr = m_pDriver->vkCreateImage(m_Device, &imInfo, NULL, &m_Overlay.Image);
     CheckVkResult(vkr);
+
+    NameVulkanObject(m_Overlay.Image, "m_Overlay.Image");
 
     VkMemoryRequirements mrq = {0};
     m_pDriver->vkGetImageMemoryRequirements(m_Device, m_Overlay.Image, &mrq);
@@ -1041,6 +1044,9 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       state.SetRenderPass(GetResID(m_Overlay.NoDepthRP));
       state.subpass = 0;
       state.SetFramebuffer(m_pDriver, GetResID(m_Overlay.NoDepthFB));
+
+      state.subpassContents = VK_SUBPASS_CONTENTS_INLINE;
+      state.dynamicRendering.flags &= VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
 
       state.graphics.pipeline = GetResID(pipe);
 
@@ -2150,6 +2156,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       vkr = m_pDriver->vkCreateImage(m_Device, &imInfo, NULL, &quadImg);
       CheckVkResult(vkr);
 
+      NameVulkanObject(quadImg, "m_Overlay.quadImg");
+
       VkMemoryRequirements mrq = {0};
 
       m_pDriver->vkGetImageMemoryRequirements(m_Device, quadImg, &mrq);
@@ -2175,8 +2183,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
           quadImg,
           VK_IMAGE_VIEW_TYPE_2D_ARRAY,
           VK_FORMAT_R32_UINT,
-          {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ZERO,
-           VK_COMPONENT_SWIZZLE_ONE},
+          {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
           {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4},
       };
 
@@ -2663,7 +2671,13 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
               NULL,
               Unwrap(RP),
               Unwrap(FB),
-              {{0, 0}, m_Overlay.ImageDim},
+              {
+                  {0, 0},
+                  {
+                      RDCMAX(1U, m_Overlay.ImageDim.width >> sub.mip),
+                      RDCMAX(1U, m_Overlay.ImageDim.height >> sub.mip),
+                  },
+              },
               1,
               &clearval,
           };

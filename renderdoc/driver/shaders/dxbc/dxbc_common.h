@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -299,16 +299,13 @@ enum VariableClass
 
 struct CBufferVariableType
 {
-  struct Descriptor
-  {
-    VariableClass varClass;
-    VarType varType;
-    uint32_t rows;
-    uint32_t cols;
-    uint32_t elements;
-    uint32_t bytesize;
-    rdcstr name;
-  } descriptor;
+  VariableClass varClass;
+  VarType varType;
+  uint32_t rows;
+  uint32_t cols;
+  uint32_t elements;
+  uint32_t bytesize;
+  rdcstr name;
 
   // if a struct, these are variables for each member (this can obviously nest). Not all
   // elements of the nested member descriptor are valid, as this might not be in a cbuffer,
@@ -316,7 +313,7 @@ struct CBufferVariableType
   rdcarray<CBufferVariable> members;
 };
 
-rdcstr TypeName(CBufferVariableType::Descriptor desc);
+rdcstr TypeName(CBufferVariableType desc);
 
 struct CBufferVariable
 {
@@ -384,7 +381,7 @@ public:
 
   virtual ShaderCompileFlags GetShaderCompileFlags() const = 0;
 
-  rdcarray<rdcpair<rdcstr, rdcstr>> Files;    // <filename, source>
+  rdcarray<ShaderSourceFile> Files;
 
   virtual void GetLineInfo(size_t instruction, uintptr_t offset, LineColumnInfo &lineInfo) const = 0;
   virtual void GetCallstack(size_t instruction, uintptr_t offset,

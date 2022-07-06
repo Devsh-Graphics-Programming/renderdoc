@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,7 +41,6 @@
 #include "Windows/APIInspector.h"
 #include "Windows/BufferViewer.h"
 #include "Windows/CommentView.h"
-#include "Windows/ConstantBufferPreviewer.h"
 #include "Windows/DebugMessageView.h"
 #include "Windows/Dialogs/CaptureDialog.h"
 #include "Windows/Dialogs/CrashDialog.h"
@@ -101,47 +100,54 @@ CaptureContext::CaptureContext(PersistantConfig &cfg) : m_Config(cfg)
 
   m_Replay.SetFatalErrorCallback([this]() {
     GUIInvoke::call(m_MainWindow, [this]() {
-      RefreshUIStatus({}, true, true);
+      ResultDetails err = GetFatalError();
 
-      ReplayStatus err = GetFatalError();
+      // if we encountered a fatal error during shutdown just ignore it, there's not much point in
+      // alerting the user and the recorded error will be gone already
+      if(!m_Replay.IsRunning())
+        return;
+
+      RefreshUIStatus({}, true, true);
 
       QString title;
       QString text;
 
-      if(err == ReplayStatus::RemoteServerConnectionLost)
+      if(err.code == ResultCode::RemoteServerConnectionLost)
       {
         QString serverName = Replay().CurrentRemote().Name();
 
         title = tr("Connection lost to %1").arg(serverName);
         text =
-            tr("Connection to %1 was lost while analysing capture.\n"
+            tr("%1.\n\n"
                "This is most commonly caused by a crash, but that can't be verified and it may be "
                "a connection issue.")
-                .arg(serverName);
+                .arg(err.Message());
       }
-      else if(err == ReplayStatus::ReplayDeviceLost)
+      else if(err.code == ResultCode::ReplayDeviceLost)
       {
         title = tr("Device Lost error");
-        text =
-            tr("The capture analysis encountered a device lost error. This may be due to an "
-               "application bug, a RenderDoc bug, or insufficient resources on the system to "
-               "analyse the capture.\n\n"
-               "It is recommended that you run your application with API validation enabled, as "
-               "API use errors can cause this kind of problem.");
+        text = tr("%1.\n\n"
+                  "This may be due to an application bug, a RenderDoc bug, or insufficient "
+                  "resources on the system to analyse the capture.\n\n"
+                  "It is recommended that you run your application with API validation enabled, as "
+                  "API usage errors can cause this kind of problem.")
+                   .arg(err.Message());
       }
-      else if(err == ReplayStatus::ReplayOutOfMemory)
+      else if(err.code == ResultCode::ReplayOutOfMemory)
       {
-        title = tr("Out of GPU memory");
-        text = tr(
-            "While analysing the capture it ran out of GPU memory. This is most likely caused by "
-            "insufficient resources on the system to analyse the capture, which is possible if "
-            "there is memory pressure from other applications or if the capture is heavyweight.");
+        title = tr("Out of memory");
+        text =
+            tr("%1.\n\n"
+               "This is most likely caused by "
+               "insufficient resources on the system to analyse the capture, which is possible if "
+               "there is memory pressure from other applications or if the capture is heavyweight.")
+                .arg(err.Message());
       }
       else
       {
         title = tr("Unrecoverable error");
         text = tr("While analysing the capture we encountered an unrecoverable error:\n\n%1")
-                   .arg(QString(ToStr(err)));
+                   .arg(err.Message());
       }
 
       text +=
@@ -445,9 +451,9 @@ bool CaptureContext::IsExtensionLoaded(rdcstr name)
   return m_ExtensionObjects.contains(name);
 }
 
-bool CaptureContext::LoadExtension(rdcstr name)
+rdcstr CaptureContext::LoadExtension(rdcstr name)
 {
-  bool ret = false;
+  QString ret;
 
   PythonContext::ProcessExtensionWork([this, &ret, name]() {
     for(QObject *o : m_ExtensionObjects[name])
@@ -457,7 +463,7 @@ bool CaptureContext::LoadExtension(rdcstr name)
 
     ret = PythonContext::LoadExtension(*this, name);
 
-    if(ret)
+    if(ret.isEmpty())
     {
       m_ExtensionObjects[name].swap(m_PendingExtensionObjects);
     }
@@ -944,17 +950,15 @@ void CaptureContext::LoadCaptureThreaded(const QString &captureFile, const Repla
   // this function call will block until the capture is either loaded, or there's some failure
   m_Replay.OpenCapture(captureFile, opts, [this](float p) { m_LoadProgress = p; });
 
+  QString filename = QFileInfo(origFilename).fileName();
+
   // if the renderer isn't running, we hit a failure case so display an error message
   if(!m_Replay.IsRunning())
   {
-    QString errmsg = ToQStr(m_Replay.GetCreateStatus());
-
-    QString messageText = tr("%1\nFailed to open capture for replay: %2.\n\n"
-                             "Check diagnostic log in Help menu for more details.")
-                              .arg(captureFile)
-                              .arg(errmsg);
-
-    RDDialog::critical(NULL, tr("Error opening capture"), messageText);
+    RDDialog::critical(NULL, tr("Error opening capture"),
+                       tr("Failed to open '%1' for replay\n\n%2")
+                           .arg(filename)
+                           .arg(m_Replay.GetCreateStatus().Message()));
 
     m_LoadInProgress = false;
     return;
@@ -981,6 +985,7 @@ void CaptureContext::LoadCaptureThreaded(const QString &captureFile, const Repla
     m_APIProps = r->GetAPIProperties();
 
     m_CustomEncodings = r->GetCustomShaderEncodings();
+    m_CustomPrefixes = r->GetCustomShaderSourcePrefixes();
     m_TargetEncodings = r->GetTargetShaderEncodings();
 
     m_PostloadProgress = 0.2f;
@@ -1342,7 +1347,9 @@ bool CaptureContext::SaveCaptureTo(const rdcstr &captureFile)
         if(capFile)
         {
           // this will overwrite
-          success = capFile->CopyFileTo(captureFile);
+          ResultDetails result = capFile->CopyFileTo(captureFile);
+          success = result.OK();
+          error = result.Message();
         }
         else
         {
@@ -1350,18 +1357,17 @@ bool CaptureContext::SaveCaptureTo(const rdcstr &captureFile)
           // prompted for overwrite)
           QFile::remove(captureFile);
           success = QFile::copy(GetCaptureFilename(), captureFile);
+          error = tr("File move failed");
         }
 
-        error = tr("Couldn't save to %1").arg(captureFile);
+        error = tr("Couldn't save to %1: %2").arg(captureFile).arg(error);
       }
     }
     else
     {
-      RDDialog::critical(
-          NULL, tr("File not found"),
-          error =
-              tr("Capture '%1' couldn't be found on disk, cannot save.").arg(GetCaptureFilename()));
+      error = tr("Capture '%1' couldn't be found on disk, cannot save.").arg(GetCaptureFilename());
       success = false;
+      RDDialog::critical(NULL, tr("File not found"), error);
     }
   }
   else
@@ -1462,29 +1468,27 @@ bool CaptureContext::ImportCapture(const CaptureFileFormat &fmt, const rdcstr &i
 
   QString ext = fmt.extension;
 
-  ReplayStatus status = ReplayStatus::UnknownError;
-  QString message;
+  ResultDetails result;
 
   // shorten the filename after here for error messages
   QString filename = QFileInfo(importfile).fileName();
 
   float progress = 0.0f;
 
-  LambdaThread *th = new LambdaThread([rdcfile, importfile, ext, &message, &progress, &status]() {
+  LambdaThread *th = new LambdaThread([rdcfile, importfile, ext, &progress, &result]() {
 
     ICaptureFile *file = RENDERDOC_OpenCaptureFile();
 
-    status = file->OpenFile(importfile, ext.toUtf8().data(),
+    result = file->OpenFile(importfile, ext.toUtf8().data(),
                             [&progress](float p) { progress = p * 0.5f; });
 
-    if(status != ReplayStatus::Succeeded)
+    if(result.code != ResultCode::Succeeded)
     {
-      message = file->ErrorString();
       file->Shutdown();
       return;
     }
 
-    status =
+    result =
         file->Convert(rdcfile, "rdc", NULL, [&progress](float p) { progress = 0.5f + p * 0.5f; });
     file->Shutdown();
   });
@@ -1499,15 +1503,10 @@ bool CaptureContext::ImportCapture(const CaptureFileFormat &fmt, const rdcstr &i
   }
   th->deleteLater();
 
-  if(status != ReplayStatus::Succeeded)
+  if(!result.OK())
   {
-    QString text = tr("Couldn't convert file '%1'\n").arg(filename);
-    if(message.isEmpty())
-      text += tr("%1").arg(ToQStr(status));
-    else
-      text += tr("%1: %2").arg(ToQStr(status)).arg(message);
-
-    RDDialog::critical(m_MainWindow, tr("Error converting capture"), text);
+    RDDialog::critical(m_MainWindow, tr("Error converting capture"),
+                       tr("Couldn't convert file '%1'\n%2").arg(filename).arg(result.Message()));
     return false;
   }
 
@@ -1523,7 +1522,7 @@ void CaptureContext::ExportCapture(const CaptureFileFormat &fmt, const rdcstr &e
 
   ICaptureFile *local = NULL;
   ICaptureFile *file = NULL;
-  ReplayStatus status = ReplayStatus::Succeeded;
+  ResultDetails result = {ResultCode::Succeeded};
 
   const SDFile *sdfile = NULL;
 
@@ -1537,21 +1536,16 @@ void CaptureContext::ExportCapture(const CaptureFileFormat &fmt, const rdcstr &e
   if(!file)
   {
     local = file = RENDERDOC_OpenCaptureFile();
-    status = file->OpenFile(m_CaptureFile, "rdc", NULL);
+    result = file->OpenFile(m_CaptureFile, "rdc", NULL);
   }
 
   QString filename = QFileInfo(m_CaptureFile).fileName();
 
-  if(status != ReplayStatus::Succeeded)
+  if(!result.OK())
   {
-    QString text = tr("Couldn't open file '%1' for export\n").arg(filename);
-    QString message = file->ErrorString();
-    if(message.isEmpty())
-      text += tr("%1").arg(ToQStr(status));
-    else
-      text += tr("%1: %2").arg(ToQStr(status)).arg(message);
-
-    RDDialog::critical(m_MainWindow, tr("Error opening file"), text);
+    RDDialog::critical(
+        m_MainWindow, tr("Error opening file"),
+        tr("Couldn't open file '%1' for export\n%2").arg(filename).arg(result.Message()));
 
     if(local)
       local->Shutdown();
@@ -1560,8 +1554,8 @@ void CaptureContext::ExportCapture(const CaptureFileFormat &fmt, const rdcstr &e
 
   float progress = 0.0f;
 
-  LambdaThread *th = new LambdaThread([file, sdfile, ext, exportfile, &progress, &status]() {
-    status = file->Convert(exportfile, ext, sdfile, [&progress](float p) { progress = p; });
+  LambdaThread *th = new LambdaThread([file, sdfile, ext, exportfile, &progress, &result]() {
+    result = file->Convert(exportfile, ext, sdfile, [&progress](float p) { progress = p; });
   });
   th->setName(lit("ExportCapture"));
   th->start();
@@ -1575,19 +1569,13 @@ void CaptureContext::ExportCapture(const CaptureFileFormat &fmt, const rdcstr &e
   }
   th->deleteLater();
 
-  QString message = file->ErrorString();
   if(local)
     local->Shutdown();
 
-  if(status != ReplayStatus::Succeeded)
+  if(!result.OK())
   {
-    QString text = tr("Couldn't convert file '%1'\n").arg(filename);
-    if(message.isEmpty())
-      text += tr("%1").arg(ToQStr(status));
-    else
-      text += tr("%1: %2").arg(ToQStr(status)).arg(message);
-
-    RDDialog::critical(m_MainWindow, tr("Error converting capture"), text);
+    RDDialog::critical(m_MainWindow, tr("Error converting capture"),
+                       tr("Couldn't convert file '%1'\n%2").arg(filename).arg(result.Message()));
   }
 }
 
@@ -1839,7 +1827,7 @@ bool CaptureContext::SaveRenames()
   props.type = SectionType::ResourceRenames;
   props.version = 1;
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8());
+  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadRenames(const QString &data)
@@ -1891,7 +1879,7 @@ bool CaptureContext::SaveBookmarks()
   props.type = SectionType::Bookmarks;
   props.version = 1;
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8());
+  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadBookmarks(const QString &data)
@@ -1931,7 +1919,7 @@ bool CaptureContext::SaveNotes()
 
   ANALYTIC_SET(UIFeatures.CaptureComments, true);
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8());
+  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadNotes(const QString &data)
@@ -1966,7 +1954,7 @@ bool CaptureContext::SaveEdits()
   props.type = SectionType::EditedShaders;
   props.version = 1;
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8());
+  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadEdits(const QString &data)
@@ -2608,14 +2596,17 @@ IBufferViewer *CaptureContext::ViewTextureAsBuffer(ResourceId id, const Subresou
   return viewer;
 }
 
-IConstantBufferPreviewer *CaptureContext::ViewConstantBuffer(ShaderStage stage, uint32_t slot,
-                                                             uint32_t idx)
+IBufferViewer *CaptureContext::ViewConstantBuffer(ShaderStage stage, uint32_t slot, uint32_t idx)
 {
-  ConstantBufferPreviewer *existing = ConstantBufferPreviewer::has(stage, slot, idx);
+  BufferViewer *existing = BufferViewer::HasCBufferView(stage, slot, idx);
   if(existing != NULL)
     return existing;
 
-  return new ConstantBufferPreviewer(*this, stage, slot, idx, m_MainWindow);
+  BufferViewer *viewer = new BufferViewer(*this, false, m_MainWindow);
+
+  viewer->ViewCBuffer(stage, slot, idx);
+
+  return viewer;
 }
 
 IPixelHistoryView *CaptureContext::ViewPixelHistory(ResourceId texID, uint32_t x, uint32_t y,
@@ -2653,10 +2644,6 @@ QWidget *CaptureContext::CreateBuiltinWindow(const rdcstr &objectName)
   else if(objectName == "debugMessageView")
   {
     return GetDebugMessageView()->Widget();
-  }
-  else if(objectName == "diagnosticLogView")
-  {
-    return GetDiagnosticLogView()->Widget();
   }
   else if(objectName == "commentView")
   {
@@ -2771,11 +2758,13 @@ void CaptureContext::AddDockWindow(QWidget *newWindow, DockReference ref, QWidge
 
   if(ref == DockReference::TransientPopupArea)
   {
-    if(qobject_cast<ConstantBufferPreviewer *>(newWindow))
+    BufferViewer *buf = qobject_cast<BufferViewer *>(newWindow);
+
+    if(buf && buf->IsCBufferView())
     {
       ToolWindowManager *manager = ToolWindowManager::managerOf(refWindow);
 
-      ConstantBufferPreviewer *cb = manager->findChild<ConstantBufferPreviewer *>();
+      BufferViewer *cb = BufferViewer::GetFirstCBufferView(buf);
       if(cb)
       {
         manager->addToolWindow(newWindow, ToolWindowManager::AreaReference(ToolWindowManager::AddTo,

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -51,7 +51,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
   else if(type == Resource_Resource)
   {
     WrappedID3D12Resource *r = (WrappedID3D12Resource *)res;
-    ID3D12Pageable *pageable = r->ResidencyPageable();
+    ID3D12Pageable *unwrappedPageable = r->UnwrappedResidencyPageable();
 
     bool nonresident = false;
     if(!r->IsResident())
@@ -112,7 +112,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
                                                         __uuidof(ID3D12Resource), (void **)&copyDst);
 
       if(nonresident)
-        m_Device->MakeResident(1, &pageable);
+        m_Device->GetReal()->MakeResident(1, &unwrappedPageable);
 
       const rdcarray<D3D12_RESOURCE_STATES> &states = m_Device->GetSubresourceStates(GetResID(res));
       RDCASSERT(states.size() == 1);
@@ -160,7 +160,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         m_Device->ExecuteLists(NULL, true);
         m_Device->FlushLists();
 
-        m_Device->Evict(1, &pageable);
+        m_Device->GetReal()->Evict(1, &unwrappedPageable);
       }
       else
       {
@@ -176,7 +176,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
     else
     {
       if(nonresident)
-        m_Device->MakeResident(1, &pageable);
+        m_Device->GetReal()->MakeResident(1, &unwrappedPageable);
 
       ID3D12Resource *arrayTexture = NULL;
       D3D12_RESOURCE_STATES destState = D3D12_RESOURCE_STATE_COPY_SOURCE;
@@ -353,7 +353,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         m_Device->FlushLists();
 
         if(nonresident)
-          m_Device->Evict(1, &pageable);
+          m_Device->GetReal()->Evict(1, &unwrappedPageable);
       }
       else
       {
@@ -437,8 +437,8 @@ SparseBinds::SparseBinds(const Sparse::PageTable &table)
       bind.heap = mapping.singleMapping.memory;
       bind.rangeOffset = uint32_t(mapping.singleMapping.offset / pageSize);
       bind.rangeCount = uint32_t(table.isSubresourceInMipTail(sub)
-                                     ? table.getMipTailSliceSize() / pageSize
-                                     : table.getSubresourceByteSize(sub) / pageSize);
+                                     ? (table.getMipTailSliceSize() + pageSize - 1) / pageSize
+                                     : (table.getSubresourceByteSize(sub) + pageSize - 1) / pageSize);
       bind.regionStart = {0, 0, 0, sub};
       bind.regionSize = {bind.rangeCount, FALSE, bind.rangeCount, 1, 1};
       bind.rangeFlag = D3D12_TILE_RANGE_FLAG_NONE;

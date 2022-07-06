@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -147,7 +147,8 @@ RDOC_CONFIG(bool, Vulkan_GPUReadbackDeviceLocal, true,
 // Memory functions
 
 template <>
-VkBindBufferMemoryInfo *WrappedVulkan::UnwrapInfos(const VkBindBufferMemoryInfo *info, uint32_t count)
+VkBindBufferMemoryInfo *WrappedVulkan::UnwrapInfos(CaptureState state,
+                                                   const VkBindBufferMemoryInfo *info, uint32_t count)
 {
   VkBindBufferMemoryInfo *ret = GetTempArray<VkBindBufferMemoryInfo>(count);
 
@@ -163,7 +164,8 @@ VkBindBufferMemoryInfo *WrappedVulkan::UnwrapInfos(const VkBindBufferMemoryInfo 
 }
 
 template <>
-VkBindImageMemoryInfo *WrappedVulkan::UnwrapInfos(const VkBindImageMemoryInfo *info, uint32_t count)
+VkBindImageMemoryInfo *WrappedVulkan::UnwrapInfos(CaptureState state,
+                                                  const VkBindImageMemoryInfo *info, uint32_t count)
 {
   size_t memSize = sizeof(VkBindImageMemoryInfo) * count;
 
@@ -214,7 +216,8 @@ bool WrappedVulkan::CheckMemoryRequirements(const char *resourceName, ResourceId
 
     if(external)
     {
-      RDCERR(
+      SET_ERROR_RESULT(
+          m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
           "Trying to bind %s to memory %s which is type %u, "
           "but only these types are allowed: %s\n"
           "This resource was created with external memory bindings, which is not represented in "
@@ -222,44 +225,43 @@ bool WrappedVulkan::CheckMemoryRequirements(const char *resourceName, ResourceId
           "Some drivers do not allow externally-imported resources to be bound to non-external "
           "memory, meaning this cannot be replayed.",
           resourceName, ToStr(memOrigId).c_str(), memInfo.memoryTypeIndex, bitsString.c_str());
-      m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
       return false;
     }
 
-    RDCERR(
+    SET_ERROR_RESULT(
+        m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
         "Trying to bind %s to memory %s which is type %u, "
         "but only these types are allowed: %s\n"
         "This is most likely caused by incompatible hardware or drivers between capture and "
         "replay, causing a change in memory requirements.",
         resourceName, ToStr(memOrigId).c_str(), memInfo.memoryTypeIndex, bitsString.c_str());
-    m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
     return false;
   }
 
   // verify offset alignment
   if((memoryOffset % mrq.alignment) != 0)
   {
-    RDCERR(
+    SET_ERROR_RESULT(
+        m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
         "Trying to bind %s to memory %s which is type %u, "
         "but offset 0x%llx doesn't satisfy alignment 0x%llx.\n"
         "This is most likely caused by incompatible hardware or drivers between capture and "
         "replay, causing a change in memory requirements.",
         resourceName, ToStr(memOrigId).c_str(), memInfo.memoryTypeIndex, memoryOffset, mrq.alignment);
-    m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
     return false;
   }
 
   // verify size
   if(mrq.size > memInfo.allocSize - memoryOffset)
   {
-    RDCERR(
+    SET_ERROR_RESULT(
+        m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
         "Trying to bind %s to memory %s which is type %u, "
         "but at offset 0x%llx the reported size of 0x%llx won't fit the 0x%llx bytes of memory.\n"
         "This is most likely caused by incompatible hardware or drivers between capture and "
         "replay, causing a change in memory requirements.",
         resourceName, ToStr(memOrigId).c_str(), memInfo.memoryTypeIndex, memoryOffset, mrq.size,
         memInfo.allocSize);
-    m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
     return false;
   }
 
@@ -291,7 +293,8 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
 
     if(patched.memoryTypeIndex >= m_PhysicalDeviceData.memProps.memoryTypeCount)
     {
-      RDCERR(
+      SET_ERROR_RESULT(
+          m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
           "Tried to allocate memory from index %u, but on replay we only have %u memory types.\n"
           "This is most likely caused by incompatible hardware or drivers between capture and "
           "replay, causing a change in memory requirements.",
@@ -303,7 +306,8 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed allocating memory, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -571,8 +575,24 @@ VkResult WrappedVulkan::vkAllocateMemory(VkDevice device, const VkMemoryAllocate
 
     if((dedicated != NULL || dedicatedNV != NULL) && wholeMemBuf != VK_NULL_HANDLE)
     {
+      VkResourceRecord *bufRecord = GetRecord(wholeMemBuf);
+
+      // make sure we have a resInfo if we don't already
+      if(!bufRecord->resInfo)
+      {
+        bufRecord->resInfo = new ResourceInfo();
+
+        // pre-populate memory requirements
+        ObjDisp(device)->GetBufferMemoryRequirements(Unwrap(device), Unwrap(wholeMemBuf),
+                                                     &bufRecord->resInfo->memreqs);
+      }
+
+      RDCASSERTEQUAL(bufRecord->resInfo->dedicatedMemory, ResourceId());
+
+      bufRecord->resInfo->dedicatedMemory = id;
+
       VkDeviceSize bufSize = IsCaptureMode(m_State)
-                                 ? GetRecord(wholeMemBuf)->memSize
+                                 ? bufRecord->memSize
                                  : m_CreationInfo.m_Buffer[GetResID(wholeMemBuf)].size;
       if(memSize > bufSize)
       {
@@ -705,6 +725,8 @@ void WrappedVulkan::vkFreeMemory(VkDevice device, VkDeviceMemory memory,
 
   VkDeviceMemory unwrappedMem = wrapped->real.As<VkDeviceMemory>();
 
+  VkBuffer wholeMemDestroy = VK_NULL_HANDLE;
+
   if(IsCaptureMode(m_State))
   {
     // artificially extend the lifespan of buffer device address memory or buffers, to ensure their
@@ -734,10 +756,7 @@ void WrappedVulkan::vkFreeMemory(VkDevice device, VkDeviceMemory memory,
 
       // destroy the wholeMemBuf if it's one we allocated ourselves
       if(!memMapState->dedicated)
-      {
-        ObjDisp(device)->DestroyBuffer(Unwrap(device), Unwrap(memMapState->wholeMemBuf), NULL);
-        GetResourceManager()->ReleaseWrappedResource(memMapState->wholeMemBuf);
-      }
+        wholeMemDestroy = memMapState->wholeMemBuf;
     }
 
     {
@@ -751,6 +770,14 @@ void WrappedVulkan::vkFreeMemory(VkDevice device, VkDeviceMemory memory,
   m_CreationInfo.erase(GetResID(memory));
 
   GetResourceManager()->ReleaseWrappedResource(memory);
+
+  // destroy this last, so that any postponed resource being serialised above still has this
+  // available
+  if(wholeMemDestroy != VK_NULL_HANDLE)
+  {
+    ObjDisp(device)->DestroyBuffer(Unwrap(device), Unwrap(wholeMemDestroy), NULL);
+    GetResourceManager()->ReleaseWrappedResource(wholeMemDestroy);
+  }
 
   ObjDisp(device)->FreeMemory(Unwrap(device), unwrappedMem, pAllocator);
 }
@@ -855,12 +882,14 @@ bool WrappedVulkan::Serialise_vkUnmapMemory(SerialiserType &ser, VkDevice device
                                               (void **)&MapData);
     if(vkr != VK_SUCCESS)
     {
-      RDCERR("Error mapping memory on replay: %s", ToStr(vkr).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error mapping memory on replay, VkResult: %s", ToStr(vkr).c_str());
       return false;
     }
     if(!MapData)
     {
-      RDCERR("Manually reporting failed memory map");
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error mapping memory on replay");
       CheckVkResult(VK_ERROR_MEMORY_MAP_FAILED);
       return false;
     }
@@ -1070,7 +1099,8 @@ bool WrappedVulkan::Serialise_vkFlushMappedMemoryRanges(SerialiserType &ser, VkD
       RDCERR("Error mapping memory on replay: %s", ToStr(ret).c_str());
     if(!MappedData)
     {
-      RDCERR("Manually reporting failed memory map");
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error mapping memory on replay");
       CheckVkResult(VK_ERROR_MEMORY_MAP_FAILED);
       return false;
     }
@@ -1592,7 +1622,8 @@ bool WrappedVulkan::Serialise_vkCreateBuffer(SerialiserType &ser, VkDevice devic
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating buffer, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -1738,6 +1769,8 @@ VkResult WrappedVulkan::vkCreateBuffer(VkDevice device, const VkBufferCreateInfo
         GetResourceManager()->MarkDirtyResource(id);
       }
 
+      record->resInfo = NULL;
+
       if(isSparse || isExternal)
       {
         record->resInfo = new ResourceInfo();
@@ -1842,7 +1875,8 @@ bool WrappedVulkan::Serialise_vkCreateBufferView(SerialiserType &ser, VkDevice d
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating buffer view, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -1989,7 +2023,7 @@ bool WrappedVulkan::Serialise_vkCreateImage(SerialiserType &ser, VkDevice device
         // of capability or because we disabled it as a workaround then we don't need this
         // capability (and it might be the bug we're trying to work around by disabling the
         // pipeline)
-        if(GetShaderCache()->IsArray2MSSupported())
+        if(GetShaderCache()->IsBuffer2MSSupported())
           CreateInfo.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
       }
       else
@@ -2087,13 +2121,16 @@ bool WrappedVulkan::Serialise_vkCreateImage(SerialiserType &ser, VkDevice device
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating image, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
     {
       ResourceId live = GetResourceManager()->WrapResource(Unwrap(device), img);
       GetResourceManager()->AddLiveResource(Image, img);
+
+      NameVulkanObject(img, StringFormat::Fmt("Image %s", ToStr(Image).c_str()));
 
       m_CreationInfo.m_Image[live].Init(GetResourceManager(), m_CreationInfo, &CreateInfo);
 
@@ -2141,6 +2178,8 @@ bool WrappedVulkan::Serialise_vkCreateImage(SerialiserType &ser, VkDevice device
         prefix = "2D " + depth + " Attachment";
       else if(CreateInfo.usage & VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT)
         prefix = "2D Fragment Density Map Attachment";
+      else if(CreateInfo.usage & VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR)
+        prefix = "2D Fragment Shading Rate Attachment";
     }
     else if(CreateInfo.imageType == VK_IMAGE_TYPE_3D)
     {
@@ -2193,7 +2232,7 @@ VkResult WrappedVulkan::vkCreateImage(VkDevice device, const VkImageCreateInfo *
       {
         // need to check the debug manager here since we might be creating this internal image from
         // its constructor
-        if(GetDebugManager() && GetShaderCache()->IsArray2MSSupported())
+        if(GetDebugManager() && GetShaderCache()->IsBuffer2MSSupported())
           createInfo_adjusted.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
       }
       else
@@ -2518,7 +2557,7 @@ void WrappedVulkan::PatchImageViewUsage(VkImageViewUsageCreateInfo *usage, VkFor
 
     if(!IsDepthOrStencilFormat(imgFormat))
     {
-      if(GetDebugManager() && GetShaderCache()->IsArray2MSSupported())
+      if(GetDebugManager() && GetShaderCache()->IsBuffer2MSSupported())
         usage->usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     else
@@ -2566,7 +2605,8 @@ bool WrappedVulkan::Serialise_vkCreateImageView(SerialiserType &ser, VkDevice de
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating image view, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -2700,7 +2740,7 @@ bool WrappedVulkan::Serialise_vkBindBufferMemory2(SerialiserType &ser, VkDevice 
         return false;
     }
 
-    VkBindBufferMemoryInfo *unwrapped = UnwrapInfos(pBindInfos, bindInfoCount);
+    VkBindBufferMemoryInfo *unwrapped = UnwrapInfos(m_State, pBindInfos, bindInfoCount);
     ObjDisp(device)->BindBufferMemory2(Unwrap(device), bindInfoCount, unwrapped);
 
     for(uint32_t i = 0; i < bindInfoCount; i++)
@@ -2750,7 +2790,7 @@ bool WrappedVulkan::Serialise_vkBindBufferMemory2(SerialiserType &ser, VkDevice 
 VkResult WrappedVulkan::vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
                                             const VkBindBufferMemoryInfo *pBindInfos)
 {
-  VkBindBufferMemoryInfo *unwrapped = UnwrapInfos(pBindInfos, bindInfoCount);
+  VkBindBufferMemoryInfo *unwrapped = UnwrapInfos(m_State, pBindInfos, bindInfoCount);
 
   VkResult ret;
   SERIALISE_TIME_CALL(
@@ -2871,7 +2911,7 @@ bool WrappedVulkan::Serialise_vkBindImageMemory2(SerialiserType &ser, VkDevice d
           imgInfo.linear ? VulkanCreationInfo::Memory::Linear : VulkanCreationInfo::Memory::Tiled);
     }
 
-    VkBindImageMemoryInfo *unwrapped = UnwrapInfos(pBindInfos, bindInfoCount);
+    VkBindImageMemoryInfo *unwrapped = UnwrapInfos(m_State, pBindInfos, bindInfoCount);
     ObjDisp(device)->BindImageMemory2(Unwrap(device), bindInfoCount, unwrapped);
   }
 
@@ -2881,7 +2921,7 @@ bool WrappedVulkan::Serialise_vkBindImageMemory2(SerialiserType &ser, VkDevice d
 VkResult WrappedVulkan::vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount,
                                            const VkBindImageMemoryInfo *pBindInfos)
 {
-  VkBindImageMemoryInfo *unwrapped = UnwrapInfos(pBindInfos, bindInfoCount);
+  VkBindImageMemoryInfo *unwrapped = UnwrapInfos(m_State, pBindInfos, bindInfoCount);
   VkResult ret;
   SERIALISE_TIME_CALL(
       ret = ObjDisp(device)->BindImageMemory2(Unwrap(device), bindInfoCount, unwrapped));

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -512,6 +512,8 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
   ID3D12PipelineState *customPSO = NULL;
 
   D3D12_GPU_VIRTUAL_ADDRESS psCBuf = 0;
+  D3D12_GPU_VIRTUAL_ADDRESS secondCBuf =
+      GetDebugManager()->UploadConstants(&heatmapData, sizeof(heatmapData));
 
   if(cfg.customShaderId != ResourceId())
   {
@@ -520,6 +522,25 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
 
     if(shader == NULL)
       return false;
+
+    RD_CustomShader_CBuffer_Type customCBuffer = {};
+
+    customCBuffer.TexDim.x = (uint32_t)resourceDesc.Width;
+    customCBuffer.TexDim.y = resourceDesc.Height;
+    customCBuffer.TexDim.z = resourceDesc.DepthOrArraySize;
+    customCBuffer.TexDim.w = resourceDesc.MipLevels;
+    customCBuffer.SelectedMip = cfg.subresource.mip;
+    customCBuffer.SelectedSliceFace = cfg.subresource.slice;
+    customCBuffer.SelectedSample = cfg.subresource.sample;
+    if(cfg.subresource.sample == ~0U)
+      customCBuffer.SelectedSample = -int(resourceDesc.SampleDesc.Count);
+    customCBuffer.TextureType = (uint32_t)resType;
+    customCBuffer.YUVDownsampleRate = YUVDownsampleRate;
+    customCBuffer.YUVAChannels = YUVAChannels;
+    customCBuffer.SelectedRange.x = cfg.rangeMin;
+    customCBuffer.SelectedRange.y = cfg.rangeMax;
+
+    psCBuf = GetDebugManager()->UploadConstants(&customCBuffer, sizeof(customCBuffer));
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeDesc = {};
     pipeDesc.pRootSignature = m_TexRender.RootSig;
@@ -562,8 +583,7 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
 
           if(var.name == "RENDERDOC_TexDim")
           {
-            if(var.type.descriptor.rows == 1 && var.type.descriptor.cols == 4 &&
-               var.type.descriptor.varType == VarType::UInt)
+            if(var.type.rows == 1 && var.type.cols == 4 && var.type.varType == VarType::UInt)
             {
               uint32_t *d = (uint32_t *)(byteData + var.offset);
 
@@ -596,8 +616,7 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
           }
           else if(var.name == "RENDERDOC_SelectedMip")
           {
-            if(var.type.descriptor.rows == 1 && var.type.descriptor.cols == 1 &&
-               var.type.descriptor.varType == VarType::UInt)
+            if(var.type.rows == 1 && var.type.cols == 1 && var.type.varType == VarType::UInt)
             {
               uint32_t *d = (uint32_t *)(byteData + var.offset);
 
@@ -611,8 +630,7 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
           }
           else if(var.name == "RENDERDOC_SelectedSliceFace")
           {
-            if(var.type.descriptor.rows == 1 && var.type.descriptor.cols == 1 &&
-               var.type.descriptor.varType == VarType::UInt)
+            if(var.type.rows == 1 && var.type.cols == 1 && var.type.varType == VarType::UInt)
             {
               uint32_t *d = (uint32_t *)(byteData + var.offset);
 
@@ -626,12 +644,13 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
           }
           else if(var.name == "RENDERDOC_SelectedSample")
           {
-            if(var.type.descriptor.rows == 1 && var.type.descriptor.cols == 1 &&
-               var.type.descriptor.varType == VarType::SInt)
+            if(var.type.rows == 1 && var.type.cols == 1 && var.type.varType == VarType::SInt)
             {
               int32_t *d = (int32_t *)(byteData + var.offset);
 
               d[0] = cfg.subresource.sample;
+              if(cfg.subresource.sample == ~0U)
+                d[0] = -int(resourceDesc.SampleDesc.Count);
             }
             else
             {
@@ -641,8 +660,7 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
           }
           else if(var.name == "RENDERDOC_TextureType")
           {
-            if(var.type.descriptor.rows == 1 && var.type.descriptor.cols == 1 &&
-               var.type.descriptor.varType == VarType::UInt)
+            if(var.type.rows == 1 && var.type.cols == 1 && var.type.varType == VarType::UInt)
             {
               uint32_t *d = (uint32_t *)(byteData + var.offset);
 
@@ -670,7 +688,25 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
           }
         }
 
-        psCBuf = GetDebugManager()->UploadConstants(cbufData, cbuf.descriptor.byteSize);
+        if(cbuf.reg == 0)
+        {
+          // with the prefix added, binding 0 should be 'reserved' for the modern cbuffer.
+          // we can still make this work, but it's unexpected
+          RDCWARN(
+              "Unexpected globals cbuffer at binding 0, expected binding 1 after prefix cbuffer");
+          psCBuf = GetDebugManager()->UploadConstants(cbufData, cbuf.descriptor.byteSize);
+        }
+        else if(cbuf.reg == 1)
+        {
+          secondCBuf = GetDebugManager()->UploadConstants(cbufData, cbuf.descriptor.byteSize);
+        }
+        else
+        {
+          RDCERR(
+              "Globals cbuffer at binding %d, unexpected and not handled - these constants will be "
+              "undefined",
+              cbuf.reg);
+        }
 
         SAFE_DELETE_ARRAY(cbufData);
       }
@@ -745,8 +781,7 @@ bool D3D12Replay::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, Texture
     list->SetGraphicsRootConstantBufferView(
         0, GetDebugManager()->UploadConstants(&vertexData, sizeof(vertexData)));
     list->SetGraphicsRootConstantBufferView(1, psCBuf);
-    list->SetGraphicsRootConstantBufferView(
-        2, GetDebugManager()->UploadConstants(&heatmapData, sizeof(heatmapData)));
+    list->SetGraphicsRootConstantBufferView(2, secondCBuf);
     list->SetGraphicsRootDescriptorTable(3, GetDebugManager()->GetGPUHandle(FIRST_TEXDISPLAY_SRV));
     list->SetGraphicsRootDescriptorTable(4, GetDebugManager()->GetGPUHandle(FIRST_SAMP));
 

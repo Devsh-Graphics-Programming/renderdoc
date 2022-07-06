@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,7 @@
 #define SERIALISER_IMPL
 
 #include "serialiser.h"
+#include "api/replay/renderdoc_replay.h"
 #include "core/core.h"
 #include "strings/string_utils.h"
 
@@ -961,6 +962,12 @@ rdcstr DoStringise(const byte &el)
 }
 
 template <>
+rdcstr DoStringise(const int8_t &el)
+{
+  return StringFormat::Fmt("%hhd", el);
+}
+
+template <>
 rdcstr DoStringise(const uint16_t &el)
 {
   return StringFormat::Fmt("%hu", el);
@@ -982,6 +989,12 @@ template <>
 rdcstr DoStringise(const float &el)
 {
   return StringFormat::Fmt("%0.4f", el);
+}
+
+template <>
+rdcstr DoStringise(const rdhalf &el)
+{
+  return StringFormat::Fmt("%0.4f", (float)el);
 }
 
 template <>

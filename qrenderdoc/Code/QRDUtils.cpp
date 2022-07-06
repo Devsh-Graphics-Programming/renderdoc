@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,6 +38,7 @@
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMetaMethod>
 #include <QMouseEvent>
@@ -65,6 +66,13 @@ rdcstr DoStringise(const uint32_t &el)
   return QString::number(el);
 }
 
+// this could be needed for CHECKs in tests
+template <>
+rdcstr DoStringise(const uint16_t &el)
+{
+  return QString::number(el);
+}
+
 // these ones we do by hand as it requires formatting
 template <>
 rdcstr DoStringise(const ResourceId &el)
@@ -85,7 +93,7 @@ void PointerTypeRegistry::Init()
 
   // type ID 0 is reserved as a NULL/empty descriptor
   typeDescriptions.resize(1);
-  typeDescriptions[0].descriptor.name = "<Unknown>";
+  typeDescriptions[0].name = "<Unknown>";
 }
 
 uint32_t PointerTypeRegistry::GetTypeID(ResourceId shader, uint32_t pointerTypeId)
@@ -119,9 +127,9 @@ const ShaderConstantType &PointerTypeRegistry::GetTypeDescriptor(uint32_t typeId
 void PointerTypeRegistry::CacheSubTypes(const ShaderReflection *reflection,
                                         ShaderConstantType &structDef)
 {
-  if((structDef.descriptor.pointerTypeID & TypeIDBit) == 0)
-    structDef.descriptor.pointerTypeID =
-        PointerTypeRegistry::GetTypeID(reflection->pointerTypes[structDef.descriptor.pointerTypeID]);
+  if((structDef.pointerTypeID & TypeIDBit) == 0)
+    structDef.pointerTypeID =
+        PointerTypeRegistry::GetTypeID(reflection->pointerTypes[structDef.pointerTypeID]);
 
   for(ShaderConstant &member : structDef.members)
     CacheSubTypes(reflection, member.type);
@@ -483,11 +491,17 @@ QString GPUAddressToString(GPUAddressPtr addr)
     return QFormatStr("0x%1").arg(addr->val.pointer, 0, 16);
 }
 
+QString EnumInterpValueToString(EnumInterpValue val)
+{
+  return val.str;
+}
+
 void RegisterMetatypeConversions()
 {
   QMetaType::registerConverter<RichResourceTextPtr, QString>(&ResIdTextToString);
   QMetaType::registerConverter<ResourceId, QString>(&ResIdToString);
   QMetaType::registerConverter<GPUAddressPtr, QString>(&GPUAddressToString);
+  QMetaType::registerConverter<EnumInterpValue, QString>(&EnumInterpValueToString);
 }
 
 bool HandleURLFragment(RichResourceTextPtr linkedText, QString text, bool parseURLs)
@@ -1068,8 +1082,9 @@ bool RichResourceTextMouseEvent(const QWidget *owner, const QVariant &var, QRect
           QString formatter;
 
           if(!ptrType.members.isEmpty())
-            formatter = BufferFormatter::DeclareStruct(ptrType.descriptor.name, ptrType.members,
-                                                       ptrType.descriptor.arrayByteStride);
+            formatter = BufferFormatter::DeclareStruct(
+                BufferFormatter::EstimatePackingRules(ptrType.members), ptrType.name,
+                ptrType.members, ptrType.arrayByteStride);
 
           IBufferViewer *view = ctx.ViewBuffer(ptr->offset, ~0ULL, ptr->base, formatter);
 
@@ -1186,6 +1201,16 @@ QString RichResourceTextFormat(ICaptureContext &ctx, QVariant var)
   // representation, or it's a fully formatted rich resource document, where the cached text will do
   // the trick with ResIdTextToString.
   return var.toString();
+}
+
+FullEditorDelegate::FullEditorDelegate(QWidget *parent) : QStyledItemDelegate(parent)
+{
+}
+
+QWidget *FullEditorDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                                          const QModelIndex &index) const
+{
+  return new QLineEdit(parent);
 }
 
 RichTextViewDelegate::RichTextViewDelegate(QAbstractItemView *parent)

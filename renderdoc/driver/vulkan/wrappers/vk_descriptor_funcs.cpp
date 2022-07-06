@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -201,7 +201,8 @@ bool WrappedVulkan::Serialise_vkCreateDescriptorPool(SerialiserType &ser, VkDevi
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed creating descriptor pool, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -297,7 +298,8 @@ bool WrappedVulkan::Serialise_vkCreateDescriptorSetLayout(
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed creating descriptor layout, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -455,8 +457,10 @@ bool WrappedVulkan::Serialise_vkAllocateDescriptorSets(SerialiserType &ser, VkDe
 
         if(ret != VK_SUCCESS)
         {
-          RDCERR("Failed on resource serialise-creation, even after trying overflow, VkResult: %s",
-                 ToStr(ret).c_str());
+          SET_ERROR_RESULT(
+              m_FailedReplayResult, ResultCode::APIReplayFailed,
+              "Failed allocating descriptor sets, even after trying to overflow pool, VkResult: %s",
+              ToStr(ret).c_str());
           return false;
         }
       }
@@ -1450,7 +1454,9 @@ bool WrappedVulkan::Serialise_vkCreateDescriptorUpdateTemplate(
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed creating descriptor update template, VkResult: %s",
+                       ToStr(ret).c_str());
       return false;
     }
     else

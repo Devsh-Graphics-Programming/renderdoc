@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -931,11 +931,11 @@ public:
     return WrappedDeviceChild12::IsResident();
   }
 
-  ID3D12Pageable *ResidencyPageable()
+  ID3D12Pageable *UnwrappedResidencyPageable()
   {
     if(m_Heap)
-      return m_Heap;
-    return this;
+      return m_Heap->GetReal();
+    return this->GetReal();
   }
 
   void SetHeap(ID3D12Heap *heap)

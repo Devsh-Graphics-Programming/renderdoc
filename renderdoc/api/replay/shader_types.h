@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -109,6 +109,37 @@ struct BindpointIndex
 
 DECLARE_REFLECTION_STRUCT(BindpointIndex);
 
+#if !defined(SWIG)
+// similarly these need to be pre-declared for use in rdhalf
+extern "C" RENDERDOC_API float RENDERDOC_CC RENDERDOC_HalfToFloat(uint16_t half);
+extern "C" RENDERDOC_API uint16_t RENDERDOC_CC RENDERDOC_FloatToHalf(float flt);
+#endif
+
+struct rdhalf
+{
+#if !defined(SWIG)
+  static rdhalf make(const uint16_t &u)
+  {
+    rdhalf ret;
+    ret.storage = u;
+    return ret;
+  }
+  static rdhalf make(const float &f)
+  {
+    rdhalf ret;
+    ret.storage = RENDERDOC_FloatToHalf(f);
+    return ret;
+  }
+  void set(const uint16_t &u) { storage = u; }
+  void set(const float &f) { storage = RENDERDOC_FloatToHalf(f); }
+#endif
+  explicit operator float() const { return RENDERDOC_HalfToFloat(storage); }
+  explicit operator uint16_t() const { return storage; }
+private:
+  uint16_t storage;
+};
+DECLARE_STRINGISE_TYPE(rdhalf);
+
 DOCUMENT("A C union that holds 16 values, with each different basic variable type.");
 union ShaderValue
 {
@@ -135,6 +166,12 @@ union ShaderValue
 :type: Tuple[float,...]
 )");
   rdcfixedarray<double, 16> f64v;
+
+  DOCUMENT(R"(16-tuple of 16-bit half-precision float values.
+
+:type: Tuple[int,...]
+)");
+  rdcfixedarray<rdhalf, 16> f16v;
 
   DOCUMENT(R"(16-tuple of 64-bit unsigned integer values.
 
@@ -187,7 +224,6 @@ struct ShaderVariable
   {
     name = "";
     rows = columns = 0;
-    displayAsHex = isStruct = rowMajor = false;
     type = VarType::Unknown;
     memset(&value, 0, sizeof(value));
   }
@@ -198,7 +234,6 @@ struct ShaderVariable
     name = n;
     rows = 1;
     columns = 4;
-    displayAsHex = isStruct = rowMajor = false;
     memset(&value, 0, sizeof(value));
     type = VarType::Float;
     value.f32v[0] = x;
@@ -211,7 +246,6 @@ struct ShaderVariable
     name = n;
     rows = 1;
     columns = 4;
-    displayAsHex = isStruct = rowMajor = false;
     memset(&value, 0, sizeof(value));
     type = VarType::SInt;
     value.s32v[0] = x;
@@ -224,7 +258,6 @@ struct ShaderVariable
     name = n;
     rows = 1;
     columns = 4;
-    displayAsHex = isStruct = rowMajor = false;
     memset(&value, 0, sizeof(value));
     type = VarType::UInt;
     value.u32v[0] = x;
@@ -235,8 +268,7 @@ struct ShaderVariable
   bool operator==(const ShaderVariable &o) const
   {
     return rows == o.rows && columns == o.columns && name == o.name && type == o.type &&
-           displayAsHex == o.displayAsHex && !memcmp(&value, &o.value, sizeof(value)) &&
-           isStruct == o.isStruct && rowMajor == o.rowMajor && members == o.members;
+           flags == o.flags && value.u64v == o.value.u64v && members == o.members;
   }
   bool operator<(const ShaderVariable &o) const
   {
@@ -248,14 +280,10 @@ struct ShaderVariable
       return name < o.name;
     if(!(type == o.type))
       return type < o.type;
-    if(!(displayAsHex == o.displayAsHex))
-      return displayAsHex < o.displayAsHex;
-    if(!(isStruct == o.isStruct))
-      return isStruct < o.isStruct;
-    if(!(rowMajor == o.rowMajor))
-      return rowMajor < o.rowMajor;
-    if(memcmp(&value, &o.value, sizeof(value)) < 0)
-      return true;
+    if(!(flags == o.flags))
+      return flags < o.flags;
+    if(value.u64v != o.value.u64v)
+      return value.u64v < o.value.u64v;
     if(!(members == o.members))
       return members < o.members;
     return false;
@@ -269,17 +297,14 @@ struct ShaderVariable
   DOCUMENT("The number of columns in this matrix.");
   uint8_t columns;
 
-  DOCUMENT("``True`` if the contents of this variable should be displayed as hex.");
-  bool displayAsHex;
-
-  DOCUMENT("``True`` if this variable is a structure and not an array or basic type.");
-  bool isStruct;
-
-  DOCUMENT("``True`` if this variable is stored in rows in memory. Only relevant for matrices.");
-  bool rowMajor;
-
   DOCUMENT("The :class:`basic type <VarType>` of this variable.");
   VarType type;
+
+  DOCUMENT(R"(The flags controlling how this constant is interpreted and displayed.
+
+:type: ShaderVariableFlags
+)");
+  ShaderVariableFlags flags = ShaderVariableFlags::NoFlags;
 
   DOCUMENT(R"(The contents of this variable if it has no members.
 
@@ -293,6 +318,28 @@ struct ShaderVariable
 )");
   rdcarray<ShaderVariable> members;
 
+  DOCUMENT(R"(Helper function for checking if :data:`flags` has
+:data:`ShaderVariableFlags.RowMajorMatrix` set. This is entirely equivalent to checking that flag
+manually, but since it is common this helper is provided.
+
+.. note::
+  Vectors and scalars will be marked as row-major by convention for convenience.
+
+:return: If the storage is row-major order in memory
+:rtype: bool
+)");
+  inline bool RowMajor() const { return bool(flags & ShaderVariableFlags::RowMajorMatrix); }
+  DOCUMENT(R"(Helper function for checking if :data:`flags` *does not* have
+:data:`ShaderVariableFlags.RowMajorMatrix` set. This is entirely equivalent to checking that flag
+manually, but since it is common this helper is provided.
+
+.. note::
+  Vectors and scalars will be marked as row-major by convention for convenience.
+
+:return: If the storage is column-major order in memory
+:rtype: bool
+)");
+  inline bool ColMajor() const { return !(flags & ShaderVariableFlags::RowMajorMatrix); }
   DOCUMENT(R"(Utility function for setting a pointer value with no type information.
 
 :param int pointer: The actual pointer value.
@@ -531,7 +578,7 @@ struct LineColumnInfo
   }
 
   DOCUMENT("The line (starting from 1) in the disassembly where this instruction is located.");
-  uint32_t disassemblyLine;
+  uint32_t disassemblyLine = 0;
 
   DOCUMENT(R"(The current file, as an index into the list of files for this shader.
 
@@ -873,69 +920,6 @@ DECLARE_REFLECTION_STRUCT(SigParameter);
 
 struct ShaderConstant;
 
-DOCUMENT("Describes the storage characteristics for a basic :class:`ShaderConstant` in memory.");
-struct ShaderConstantDescriptor
-{
-  DOCUMENT("");
-  ShaderConstantDescriptor() = default;
-  ShaderConstantDescriptor(const ShaderConstantDescriptor &) = default;
-  ShaderConstantDescriptor &operator=(const ShaderConstantDescriptor &) = default;
-
-  bool operator==(const ShaderConstantDescriptor &o) const
-  {
-    return type == o.type && rows == o.rows && columns == o.columns &&
-           rowMajorStorage == o.rowMajorStorage && elements == o.elements &&
-           arrayByteStride == o.arrayByteStride && matrixByteStride == o.matrixByteStride &&
-           pointerTypeID == o.pointerTypeID && name == o.name;
-  }
-  bool operator<(const ShaderConstantDescriptor &o) const
-  {
-    if(!(type == o.type))
-      return type < o.type;
-    if(!(rows == o.rows))
-      return rows < o.rows;
-    if(!(columns == o.columns))
-      return columns < o.columns;
-    if(!(rowMajorStorage == o.rowMajorStorage))
-      return rowMajorStorage < o.rowMajorStorage;
-    if(!(elements == o.elements))
-      return elements < o.elements;
-    if(!(arrayByteStride == o.arrayByteStride))
-      return arrayByteStride < o.arrayByteStride;
-    if(!(matrixByteStride == o.matrixByteStride))
-      return matrixByteStride < o.matrixByteStride;
-    if(!(name == o.name))
-      return name < o.name;
-    return false;
-  }
-  DOCUMENT("The name of the type of this constant, e.g. a ``struct`` name.");
-  rdcstr name;
-  DOCUMENT("The index in :data:`ShaderReflection.pointerTypes` of the pointee type.");
-  uint32_t pointerTypeID = ~0U;
-  DOCUMENT("The number of elements in the array, or 1 if it's not an array.");
-  uint32_t elements = 1;
-  DOCUMENT("The number of bytes between the start of one element in the array and the next.");
-  uint32_t arrayByteStride = 0;
-  DOCUMENT("The :class:`VarType` that this basic constant stores.");
-  VarType type = VarType::Unknown;
-  DOCUMENT("The number of rows in this matrix.");
-  uint8_t rows = 1;
-  DOCUMENT("The number of columns in this matrix.");
-  uint8_t columns = 1;
-  DOCUMENT("The number of bytes between the start of one column/row in a matrix and the next.");
-  uint8_t matrixByteStride = 0;
-  DOCUMENT("``True`` if the matrix is stored as row major instead of column major.");
-  bool rowMajorStorage = false;
-  DOCUMENT("``True`` if the contents of this variable should be displayed as hex.");
-  bool displayAsHex = false;
-  DOCUMENT(R"(``True`` if the contents of this variable should be displayed as RGB color (where
- possible).
- )");
-  bool displayAsRGB = false;
-};
-
-DECLARE_REFLECTION_STRUCT(ShaderConstantDescriptor);
-
 DOCUMENT("Describes the type and members of a :class:`ShaderConstant`.");
 struct ShaderConstantType
 {
@@ -946,32 +930,89 @@ struct ShaderConstantType
 
   bool operator==(const ShaderConstantType &o) const
   {
-    return descriptor == o.descriptor && members == o.members;
+    return baseType == o.baseType && rows == o.rows && columns == o.columns && flags == o.flags &&
+           elements == o.elements && arrayByteStride == o.arrayByteStride &&
+           matrixByteStride == o.matrixByteStride && pointerTypeID == o.pointerTypeID &&
+           name == o.name && members == o.members;
   }
   bool operator<(const ShaderConstantType &o) const
   {
-    if(!(descriptor == o.descriptor))
-      return descriptor < o.descriptor;
+    if(!(baseType == o.baseType))
+      return baseType < o.baseType;
+    if(!(rows == o.rows))
+      return rows < o.rows;
+    if(!(columns == o.columns))
+      return columns < o.columns;
+    if(!(flags == o.flags))
+      return flags < o.flags;
+    if(!(elements == o.elements))
+      return elements < o.elements;
+    if(!(arrayByteStride == o.arrayByteStride))
+      return arrayByteStride < o.arrayByteStride;
+    if(!(matrixByteStride == o.matrixByteStride))
+      return matrixByteStride < o.matrixByteStride;
+    if(!(name == o.name))
+      return name < o.name;
     if(!(members == o.members))
       return members < o.members;
     return false;
   }
-  DOCUMENT(R"(The description of this constant.
-
-:type: ShaderConstantDescriptor
-)");
-  ShaderConstantDescriptor descriptor;
-
+  DOCUMENT("The name of the type of this constant, e.g. a ``struct`` name.");
+  rdcstr name;
   DOCUMENT(R"(Any members that this constant may contain.
 
 :type: List[ShaderConstant]
 )");
   rdcarray<ShaderConstant> members;
+  DOCUMENT(R"(The flags controlling how this constant is interpreted and displayed.
+
+:type: ShaderVariableFlags
+)");
+  ShaderVariableFlags flags = ShaderVariableFlags::NoFlags;
+  DOCUMENT("The index in :data:`ShaderReflection.pointerTypes` of the pointee type.");
+  uint32_t pointerTypeID = ~0U;
+  DOCUMENT("The number of elements in the array, or 1 if it's not an array.");
+  uint32_t elements = 1;
+  DOCUMENT("The number of bytes between the start of one element in the array and the next.");
+  uint32_t arrayByteStride = 0;
+  DOCUMENT("The base :class:`VarType` of this constant.");
+  VarType baseType = VarType::Unknown;
+  DOCUMENT("The number of rows in this matrix.");
+  uint8_t rows = 1;
+  DOCUMENT("The number of columns in this matrix.");
+  uint8_t columns = 1;
+  DOCUMENT("The number of bytes between the start of one column/row in a matrix and the next.");
+  uint8_t matrixByteStride = 0;
+
+  DOCUMENT(R"(Helper function for checking if :data:`flags` has
+:data:`ShaderVariableFlags.RowMajorMatrix` set. This is entirely equivalent to checking that flag
+manually, but since it is common this helper is provided.
+
+.. note::
+  Vectors and scalars will be marked as row-major by convention for convenience.
+
+:return: If the storage is row-major order in memory
+:rtype: bool
+)");
+  inline bool RowMajor() const { return bool(flags & ShaderVariableFlags::RowMajorMatrix); }
+  DOCUMENT(R"(Helper function for checking if :data:`flags` *does not* have
+:data:`ShaderVariableFlags.RowMajorMatrix` set. This is entirely equivalent to checking that flag
+manually, but since it is common this helper is provided.
+
+.. note::
+  Vectors and scalars will be marked as row-major by convention for convenience.
+
+:return: If the storage is column-major order in memory
+:rtype: bool
+)");
+  inline bool ColMajor() const { return !(flags & ShaderVariableFlags::RowMajorMatrix); }
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderConstantType);
 
-DOCUMENT("Contains the detail of a constant within a :class:`ConstantBlock` in memory.");
+DOCUMENT(R"(Contains the detail of a constant within a struct, such as a :class:`ConstantBlock`,
+with its type and relative location in memory.
+)");
 struct ShaderConstant
 {
   DOCUMENT("");
@@ -1000,6 +1041,29 @@ struct ShaderConstant
   rdcstr name;
   DOCUMENT("The byte offset of this constant relative to the parent structure");
   uint32_t byteOffset = 0;
+  DOCUMENT(R"(If the variable is bitfield packed, the bit offset from :data:`byteOffset` above where
+this variable starts.
+
+If the variable is not a bitfield, this value will be 0. Only integer scalars will have bitfield
+packing.
+
+.. note::
+   Although the offset specified in :data:`byteOffset` is in bytes, this bitfield offset may be
+   larger than 0 depending on the surrounding values and their types and packing. However it is
+   guaranteed that the offset and the size (from :data:`bitFieldSize`) will be contained within the
+   normal bit size for the variable type. For example if the variable type is a 32-bit integer, the
+   offsets may range from 0 to 31 and the sum of offset and size will be no more than 32. If the
+   variable is an 8-bit integer, similarly the offset will be 0 to 7 and the sum will be no more
+   than 8.
+)");
+  uint16_t bitFieldOffset = 0;
+  DOCUMENT(R"(If the variable is bitfield packed, the number of bits this variable spans starting
+from :data:`bitFieldOffset` into memory.
+
+If the variable is not a bitfield, this value will be 0. Only integer scalars will have bitfield
+packing.
+)");
+  uint16_t bitFieldSize = 0;
   DOCUMENT("If this constant is no larger than a 64-bit constant, gives a default value for it.");
   uint64_t defaultValue = 0;
   DOCUMENT(R"(The type information for this constant.
@@ -1234,6 +1298,35 @@ struct ShaderCompileFlags
 };
 
 DECLARE_REFLECTION_STRUCT(ShaderCompileFlags);
+
+DOCUMENT("Contains the source prefix to add to a given type of shader source");
+struct ShaderSourcePrefix
+{
+  DOCUMENT("");
+  ShaderSourcePrefix() = default;
+  ShaderSourcePrefix(const ShaderSourcePrefix &) = default;
+  ShaderSourcePrefix &operator=(const ShaderSourcePrefix &) = default;
+
+  bool operator==(const ShaderSourcePrefix &o) const
+  {
+    return encoding == o.encoding && prefix == o.prefix;
+  }
+  bool operator<(const ShaderSourcePrefix &o) const
+  {
+    if(!(encoding == o.encoding))
+      return encoding < o.encoding;
+    if(!(prefix == o.prefix))
+      return prefix < o.prefix;
+    return false;
+  }
+  DOCUMENT("The encoding of the language this prefix applies to.");
+  ShaderEncoding encoding;
+
+  DOCUMENT("The source prefix to add.");
+  rdcstr prefix;
+};
+
+DECLARE_REFLECTION_STRUCT(ShaderSourcePrefix);
 
 DOCUMENT("Contains a source file available in a debug-compiled shader.");
 struct ShaderSourceFile

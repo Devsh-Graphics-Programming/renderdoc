@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1001,6 +1001,29 @@ GLResourceRecord *WrappedOpenGL::GetContextRecord()
   }
 }
 
+void WrappedOpenGL::UseUnusedSupportedFunction(const char *name)
+{
+  // if this is the first time an unused function is called, remove all frame capturers immediately
+  if(m_UnsupportedFunctions.empty())
+  {
+    for(auto it = m_ContextData.begin(); it != m_ContextData.end(); ++it)
+    {
+      if(it->second.Modern())
+      {
+        RenderDoc::Inst().RemoveDeviceFrameCapturer(it->second.ctx);
+        for(auto wnd = it->second.windows.begin(); wnd != it->second.windows.end();)
+        {
+          void *wndHandle = wnd->first;
+          wnd++;
+          it->second.UnassociateWindow(this, wndHandle);
+        }
+      }
+    }
+  }
+
+  m_UnsupportedFunctions.insert(name);
+}
+
 void WrappedOpenGL::CheckImplicitThread()
 {
   void *ctx = GetCtx().ctx;
@@ -1169,7 +1192,9 @@ void WrappedOpenGL::CreateContext(GLWindowingData winData, void *shareContext,
     RDCLOG("Reusing old sharegroup %p", ctxdata.shareGroup);
   }
 
-  if(attribsCreate)
+  // if the context was created with modern attribs create (whether or not it's explicitly core),
+  // and no unsupported functions have been used, we can capture from this context
+  if(attribsCreate && m_UnsupportedFunctions.empty())
     RenderDoc::Inst().AddDeviceFrameCapturer(ctxdata.ctx, this);
 
   // re-configure callstack capture, since WrappedOpenGL constructor may run too early
@@ -1974,7 +1999,9 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
       if(it->first != ctxdata.ctx)
         it->second.UnassociateWindow(this, windowHandle);
 
-    ctxdata.AssociateWindow(this, winSystem, windowHandle);
+    // only associate windows if no unsupported functions have been used
+    if(m_UnsupportedFunctions.empty())
+      ctxdata.AssociateWindow(this, winSystem, windowHandle);
   }
 
   // we used to do this here so it was as late as possible to avoid creating objects on contexts
@@ -2016,7 +2043,8 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
     if(overlay & eRENDERDOC_Overlay_Enabled)
     {
       int flags = activeWindow ? RenderDoc::eOverlay_ActiveWindow : 0;
-      if(ctxdata.Legacy())
+      // capturing is disabled if unsupported functions have been used, or this context is legacy
+      if(ctxdata.Legacy() || !m_UnsupportedFunctions.empty())
         flags |= RenderDoc::eOverlay_CaptureDisabled;
       rdcstr overlayText = RenderDoc::Inst().GetOverlayText(GetDriverType(), m_FrameCounter, flags);
 
@@ -2031,6 +2059,22 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
         overlayText +=
             "WARNING: Core profile not explicitly requested. Compatibility profile is not "
             "supported.\n";
+      }
+
+      // print the unsupported functions (up to a handful) to show
+      if(!m_UnsupportedFunctions.empty())
+      {
+        overlayText += "Captures disabled.\nUnsupported function used:\n";
+        size_t i = 0;
+        for(const char *func : m_UnsupportedFunctions)
+        {
+          i++;
+          if(i > 4)
+            break;
+          overlayText += StringFormat::Fmt(" - %s\n", func);
+        }
+        if(m_UnsupportedFunctions.size() > i)
+          overlayText += " - ...\n";
       }
 
       if(activeWindow && m_FailedFrame > 0)
@@ -3275,12 +3319,12 @@ void WrappedOpenGL::AddResourceInitChunk(GLResource res)
   }
 }
 
-ReplayStatus WrappedOpenGL::ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
+RDResult WrappedOpenGL::ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
 {
   int sectionIdx = rdc->SectionIndex(SectionType::FrameCapture);
 
   if(sectionIdx < 0)
-    return ReplayStatus::FileCorrupted;
+    RETURN_ERROR_RESULT(ResultCode::FileCorrupted, "File does not contain captured API data");
 
   StreamReader *reader = rdc->ReadSection(sectionIdx);
 
@@ -3298,8 +3342,9 @@ ReplayStatus WrappedOpenGL::ReadLogInitialisation(RDCFile *rdc, bool storeStruct
 
   if(reader->IsErrored())
   {
+    RDResult result = reader->GetError();
     delete reader;
-    return ReplayStatus::FileIOFailed;
+    return result;
   }
 
   ReadSerialiser ser(reader, Ownership::Stream);
@@ -3342,19 +3387,19 @@ ReplayStatus WrappedOpenGL::ReadLogInitialisation(RDCFile *rdc, bool storeStruct
     chunkIdx++;
 
     if(reader->IsErrored())
-      return ReplayStatus::APIDataCorrupted;
+      return RDResult(ResultCode::APIDataCorrupted, ser.GetError().message);
 
     bool success = ProcessChunk(ser, context);
 
     ser.EndChunk();
 
     if(reader->IsErrored())
-      return ReplayStatus::APIDataCorrupted;
+      return RDResult(ResultCode::APIDataCorrupted, ser.GetError().message);
 
     // if there wasn't a serialisation error, but the chunk didn't succeed, then it's an API replay
     // failure.
     if(!success)
-      return m_FailedReplayStatus;
+      return m_FailedReplayResult;
 
     uint64_t offsetEnd = reader->GetOffset();
 
@@ -3381,9 +3426,9 @@ ReplayStatus WrappedOpenGL::ReadLogInitialisation(RDCFile *rdc, bool storeStruct
       // contents
       savedDebugMessages.swap(m_DebugMessages);
 
-      ReplayStatus status = ContextReplayLog(m_State, 0, 0, false);
+      RDResult status = ContextReplayLog(m_State, 0, 0, false);
 
-      if(status != ReplayStatus::Succeeded)
+      if(status != ResultCode::Succeeded)
         return status;
     }
 
@@ -3436,7 +3481,7 @@ ReplayStatus WrappedOpenGL::ReadLogInitialisation(RDCFile *rdc, bool storeStruct
   RDCDEBUG("Allocating %llu persistant bytes of memory for the log.",
            GetReplay()->WriteFrameRecord().frameInfo.persistentSize);
 
-  return ReplayStatus::Succeeded;
+  return ResultCode::Succeeded;
 }
 
 bool WrappedOpenGL::ProcessChunk(ReadSerialiser &ser, GLChunk chunk)
@@ -5059,8 +5104,8 @@ bool WrappedOpenGL::ProcessChunk(ReadSerialiser &ser, GLChunk chunk)
   return false;
 }
 
-ReplayStatus WrappedOpenGL::ContextReplayLog(CaptureState readType, uint32_t startEventID,
-                                             uint32_t endEventID, bool partial)
+RDResult WrappedOpenGL::ContextReplayLog(CaptureState readType, uint32_t startEventID,
+                                         uint32_t endEventID, bool partial)
 {
   m_FrameReader->SetOffset(0);
 
@@ -5161,7 +5206,7 @@ ReplayStatus WrappedOpenGL::ContextReplayLog(CaptureState readType, uint32_t sta
     GLChunk chunktype = ser.ReadChunk<GLChunk>();
 
     if(ser.GetReader()->IsErrored())
-      return ReplayStatus::APIDataCorrupted;
+      return RDResult(ResultCode::APIDataCorrupted, ser.GetError().message);
 
     m_ChunkMetadata = ser.ChunkMetadata();
 
@@ -5170,12 +5215,12 @@ ReplayStatus WrappedOpenGL::ContextReplayLog(CaptureState readType, uint32_t sta
     ser.EndChunk();
 
     if(ser.GetReader()->IsErrored())
-      return ReplayStatus::APIDataCorrupted;
+      return RDResult(ResultCode::APIDataCorrupted, ser.GetError().message);
 
     // if there wasn't a serialisation error, but the chunk didn't succeed, then it's an API replay
     // failure.
     if(!success)
-      return m_FailedReplayStatus;
+      return m_FailedReplayResult;
 
     RenderDoc::Inst().SetProgress(
         LoadProgress::FrameEventsRead,
@@ -5247,7 +5292,7 @@ ReplayStatus WrappedOpenGL::ContextReplayLog(CaptureState readType, uint32_t sta
     }
   }
 
-  return ReplayStatus::Succeeded;
+  return ResultCode::Succeeded;
 }
 
 bool WrappedOpenGL::ContextProcessChunk(ReadSerialiser &ser, GLChunk chunk)
@@ -5419,8 +5464,8 @@ void WrappedOpenGL::AddUsage(const ActionDescription &a)
           }
           else
           {
-            if(res.variableType.descriptor.columns == 1 && res.variableType.descriptor.rows == 1 &&
-               res.variableType.descriptor.type == VarType::UInt)
+            if(res.variableType.columns == 1 && res.variableType.rows == 1 &&
+               res.variableType.baseType == VarType::UInt)
             {
               if(rs.AtomicCounter[bind].res.name)
                 m_ResourceUses[rm->GetResID(rs.AtomicCounter[bind].res)].push_back(rw);
@@ -5689,7 +5734,7 @@ void WrappedOpenGL::ReplayLog(uint32_t startEventID, uint32_t endEventID, Replay
 
   m_ReplayEventCount = 0;
 
-  ReplayStatus status = ReplayStatus::Succeeded;
+  RDResult status = ResultCode::Succeeded;
 
   if(replayType == eReplay_Full)
     status = ContextReplayLog(m_State, startEventID, endEventID, partial);
@@ -5700,7 +5745,7 @@ void WrappedOpenGL::ReplayLog(uint32_t startEventID, uint32_t endEventID, Replay
   else
     RDCFATAL("Unexpected replay type");
 
-  RDCASSERTEQUAL(status, ReplayStatus::Succeeded);
+  RDCASSERTEQUAL(status.code, ResultCode::Succeeded);
 
   // make sure to end any unbalanced replay events if we stopped in the middle of a frame
   for(int i = 0; m_ReplayMarkers && i < m_ReplayEventCount; i++)

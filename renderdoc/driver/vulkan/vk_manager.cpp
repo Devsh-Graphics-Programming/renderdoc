@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -583,6 +583,10 @@ void VulkanResourceManager::InsertDeviceMemoryRefs(WriteSerialiser &ser)
       data.push_back({*memIt, jt->start(), jt->value()});
   }
 
+  for(ResourceId dead : m_DeadDeviceMemories)
+    m_DeviceMemories.erase(dead);
+  m_DeadDeviceMemories.clear();
+
   uint64_t sizeEstimate = data.size() * sizeof(MemRefInterval) + 32;
 
   {
@@ -936,7 +940,10 @@ void VulkanResourceManager::RemoveDeviceMemory(ResourceId mem)
 {
   SCOPED_LOCK_OPTIONAL(m_Lock, m_Capturing);
 
-  m_DeviceMemories.erase(mem);
+  if(IsActiveCapturing(m_State))
+    m_DeadDeviceMemories.push_back(mem);
+  else
+    m_DeviceMemories.erase(mem);
 }
 
 void VulkanResourceManager::MergeReferencedMemory(std::unordered_map<ResourceId, MemRefs> &memRefs)

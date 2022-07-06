@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -978,6 +978,8 @@ struct ResourceInfo
   Sparse::PageTable sparseTable;
   rdcarray<AspectSparseTable> altSparseAspects;
   VkImageAspectFlags sparseAspect;
+
+  ResourceId dedicatedMemory;
 
   Sparse::PageTable &getSparseTableForAspect(VkImageAspectFlags aspects)
   {
@@ -2391,9 +2393,69 @@ struct Vec4u;
 
 void GetYUVShaderParameters(VkFormat f, Vec4u &YUVDownsampleRate, Vec4u &YUVAChannels);
 
+// The shape of blocks in (a plane of) an image format.
+// Non-block formats are considered to have 1x1 blocks.
+// For some planar formats, the block shape depends on the plane--
+// e.g. VK_FORMAT_G8_B8R8_2PLANE_422_UNORM has 8 bits per 1x1 block in plane 0, but 16 bits per 1x1
+// block in plane 1.
+struct BlockShape
+{
+  // the width of a block, in texels (or 1 for non-block formats)
+  uint32_t width;
+
+  // the height of a block, in texels (or 1 for non-block formats)
+  uint32_t height;
+
+  // the number of bytes used to encode the block
+  uint32_t bytes;
+};
+
+BlockShape GetBlockShape(VkFormat Format, uint32_t plane);
+
 uint32_t GetByteSize(uint32_t Width, uint32_t Height, uint32_t Depth, VkFormat Format, uint32_t mip);
 uint32_t GetPlaneByteSize(uint32_t Width, uint32_t Height, uint32_t Depth, VkFormat Format,
                           uint32_t mip, uint32_t plane);
+
+template <typename T>
+VkObjectType objType();
+
+template <typename T>
+void NameVulkanObject(T obj, const rdcstr &name)
+{
+  if(!VkMarkerRegion::vk)
+    return;
+
+  VkDevice dev = VkMarkerRegion::GetDev();
+
+  if(!ObjDisp(dev)->SetDebugUtilsObjectNameEXT)
+    return;
+
+  VkDebugUtilsObjectNameInfoEXT info = {};
+  info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+  info.objectType = objType<T>();
+  info.objectHandle = NON_DISP_TO_UINT64(Unwrap(obj));
+  info.pObjectName = name.c_str();
+  ObjDisp(dev)->SetDebugUtilsObjectNameEXT(Unwrap(dev), &info);
+}
+
+template <typename T>
+void NameUnwrappedVulkanObject(T obj, const rdcstr &name)
+{
+  if(!VkMarkerRegion::vk)
+    return;
+
+  VkDevice dev = VkMarkerRegion::GetDev();
+
+  if(!ObjDisp(dev)->SetDebugUtilsObjectNameEXT)
+    return;
+
+  VkDebugUtilsObjectNameInfoEXT info = {};
+  info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+  info.objectType = objType<T>();
+  info.objectHandle = NON_DISP_TO_UINT64(obj);
+  info.pObjectName = name.c_str();
+  ObjDisp(dev)->SetDebugUtilsObjectNameEXT(Unwrap(dev), &info);
+}
 
 template <typename Compose>
 FrameRefType MarkImageReferenced(rdcflatmap<ResourceId, ImgRefs> &imgRefs, ResourceId img,

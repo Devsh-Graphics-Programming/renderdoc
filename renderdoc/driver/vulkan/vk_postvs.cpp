@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -185,6 +185,11 @@ static void ConvertToMeshOutputCompute(const ShaderReflection &refl,
       }
       // remove all invariant decorations
       else if(decorate.decoration == rdcspv::Decoration::Invariant)
+      {
+        editor.Remove(it);
+      }
+      // remove all index decorations
+      else if(decorate.decoration == rdcspv::Decoration::Index)
       {
         editor.Remove(it);
       }
@@ -918,6 +923,16 @@ static void ConvertToMeshOutputCompute(const ShaderReflection &refl,
         // might actually have an impact on the behaviour of the shader.
         switch(execMode.mode)
         {
+          // these execution modes should be applied to our entry point
+          case rdcspv::ExecutionMode::DenormPreserve:
+          case rdcspv::ExecutionMode::DenormFlushToZero:
+          case rdcspv::ExecutionMode::SignedZeroInfNanPreserve:
+          case rdcspv::ExecutionMode::RoundingModeRTE:
+          case rdcspv::ExecutionMode::RoundingModeRTZ:
+          case rdcspv::ExecutionMode::SubgroupUniformControlFlowKHR:
+            editor.AddExecutionMode(rdcspv::OpExecutionMode(
+                wrapperEntry, rdcspv::ExecutionModeAndParamData(execMode.mode)));
+            break;
           case rdcspv::ExecutionMode::Xfb: break;
           default: RDCERR("Unexpected execution mode");
         }
@@ -1570,7 +1585,8 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
   // VERTEX_BIT. Find it, and make it COMPUTE_BIT
   VkPushConstantRange push;
   uint32_t numPush = 0;
-  rdcarray<VkPushConstantRange> oldPush = creationInfo.m_PipelineLayout[pipeInfo.layout].pushRanges;
+  rdcarray<VkPushConstantRange> oldPush =
+      creationInfo.m_PipelineLayout[pipeInfo.vertLayout].pushRanges;
 
   // ensure the push range is visible to the compute shader
   for(const VkPushConstantRange &range : oldPush)
@@ -1617,7 +1633,8 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
     // To get around this we patch descriptor set layouts at create time so that COMPUTE_BIT is
     // present wherever VERTEX_BIT was, so we can use the application's descriptor sets and layouts
 
-    const rdcarray<ResourceId> &sets = creationInfo.m_PipelineLayout[pipeInfo.layout].descSetLayouts;
+    const rdcarray<ResourceId> &sets =
+        creationInfo.m_PipelineLayout[pipeInfo.vertLayout].descSetLayouts;
 
     setLayouts.reserve(sets.size());
 
@@ -2004,9 +2021,7 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
     rdcarray<VkWriteDescriptorSet> descWrites(MeshOutputBufferArraySize);
     uint32_t numWrites = 0;
 
-    const VkPipelineVertexInputStateCreateInfo *vi = pipeCreateInfo.pVertexInputState;
-
-    RDCASSERT(vi->vertexAttributeDescriptionCount <= MeshOutputBufferArraySize);
+    RDCASSERT(state.vertexAttributes.size() <= MeshOutputBufferArraySize);
 
     // we fetch the vertex buffer data up front here since there's a very high chance of either
     // overlap due to interleaved attributes, or no overlap and no wastage due to separate compact
@@ -2014,9 +2029,9 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
     rdcarray<bytebuf> origVBs;
     origVBs.reserve(16);
 
-    for(uint32_t vb = 0; vb < vi->vertexBindingDescriptionCount; vb++)
+    for(uint32_t vb = 0; vb < state.vertexBindings.size(); vb++)
     {
-      uint32_t binding = vi->pVertexBindingDescriptions[vb].binding;
+      uint32_t binding = state.vertexBindings[vb].binding;
       if(binding >= state.vbuffers.size())
       {
         origVBs.push_back(bytebuf());
@@ -2027,7 +2042,7 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
       VkDeviceSize stride = state.vbuffers[binding].stride;
       uint64_t len = 0;
 
-      if(vi->pVertexBindingDescriptions[vb].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE)
+      if(state.vertexBindings[vb].inputRate == VK_VERTEX_INPUT_RATE_INSTANCE)
       {
         len = (uint64_t(maxInstance) + 1) * stride;
 
@@ -2047,9 +2062,9 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
         GetBufferData(state.vbuffers[binding].buf, offs, len, origVBs.back());
     }
 
-    for(uint32_t i = 0; i < vi->vertexAttributeDescriptionCount; i++)
+    for(uint32_t i = 0; i < state.vertexAttributes.size(); i++)
     {
-      const VkVertexInputAttributeDescription &attrDesc = vi->pVertexAttributeDescriptions[i];
+      const VkVertexInputAttributeDescription2EXT &attrDesc = state.vertexAttributes[i];
       uint32_t attr = attrDesc.location;
 
       RDCASSERT(attr < 64);
@@ -2065,9 +2080,9 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
       const byte *origVBBegin = NULL;
       const byte *origVBEnd = NULL;
 
-      for(uint32_t vb = 0; vb < vi->vertexBindingDescriptionCount; vb++)
+      for(uint32_t vb = 0; vb < state.vertexBindings.size(); vb++)
       {
-        const VkVertexInputBindingDescription &vbDesc = vi->pVertexBindingDescriptions[vb];
+        const VkVertexInputBindingDescription2EXT &vbDesc = state.vertexBindings[vb];
         if(vbDesc.binding == attrDesc.binding)
         {
           origVBBegin = origVBs[vb].data() + attrDesc.offset;
@@ -2078,7 +2093,7 @@ void VulkanReplay::FetchVSOut(uint32_t eventId, VulkanRenderState &state)
 
           stride = vbDesc.stride;
           if(vbDesc.inputRate == VK_VERTEX_INPUT_RATE_INSTANCE)
-            instDivisor = pipeInfo.vertexBindings[vbDesc.binding].instanceDivisor;
+            instDivisor = vbDesc.divisor;
           else
             instDivisor = ~0U;
           break;
@@ -2864,7 +2879,8 @@ void VulkanReplay::FetchTessGSOut(uint32_t eventId, VulkanRenderState &state)
   }
 
   if(state.dynamicRendering.viewMask > 1 ||
-     !creationInfo.m_RenderPass[state.GetRenderPass()].subpasses[state.subpass].multiviews.empty())
+     (state.GetRenderPass() != ResourceId() &&
+      !creationInfo.m_RenderPass[state.GetRenderPass()].subpasses[state.subpass].multiviews.empty()))
   {
     RDCWARN("Multipass is active for this draw, no GS/Tess mesh output is available");
     return;
@@ -3020,6 +3036,9 @@ void VulkanReplay::FetchTessGSOut(uint32_t eventId, VulkanRenderState &state)
   // disable any existing XFB
   state.xfbbuffers.clear();
   state.xfbcounters.clear();
+
+  state.subpassContents = VK_SUBPASS_CONTENTS_INLINE;
+  state.dynamicRendering.flags &= VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
 
   if(m_PostVS.XFBQueryPoolSize < action->numInstances)
   {
@@ -3458,6 +3477,7 @@ struct VulkanInitPostVSCallback : public VulkanActionCallback
       m_pDriver->GetReplay()->AliasPostVSBuffers(primary, alias);
   }
   bool SplitSecondary() { return false; }
+  bool ForceLoadRPs() { return false; }
   void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
                      VkCommandBuffer cmd)
   {

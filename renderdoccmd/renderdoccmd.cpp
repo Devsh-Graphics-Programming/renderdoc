@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -259,14 +259,14 @@ public:
     bytebuf buf;
 
     ICaptureFile *file = RENDERDOC_OpenCaptureFile();
-    ReplayStatus st = file->OpenFile(conv(infile), "rdc", NULL);
-    if(st == ReplayStatus::Succeeded)
+    ResultDetails st = file->OpenFile(conv(infile), "rdc", NULL);
+    if(st.OK())
     {
       buf = file->GetThumbnail(type, maxsize).data;
     }
     else
     {
-      std::cerr << "Couldn't open '" << infile << "': " << ToStr(st) << std::endl;
+      std::cerr << "Couldn't open '" << infile << "': " << st.Message() << std::endl;
     }
     file->Shutdown();
 
@@ -359,10 +359,10 @@ public:
     ExecuteResult res = RENDERDOC_ExecuteAndInject(
         conv(executable), conv(workingDir), conv(cmdLine), env, conv(logFile), opts, wait_for_exit);
 
-    if(res.status != ReplayStatus::Succeeded)
+    if(res.result.code != ResultCode::Succeeded)
     {
-      std::cerr << "Failed to create & inject: " << ToStr(res.status) << std::endl;
-      return (int)res.status;
+      std::cerr << "Failed to create & inject: " << res.result.Message() << std::endl;
+      return (int)res.result.code;
     }
 
     if(wait_for_exit)
@@ -430,10 +430,10 @@ public:
 
     ExecuteResult res = RENDERDOC_InjectIntoProcess(PID, env, conv(captureFile), opts, wait_for_exit);
 
-    if(res.status != ReplayStatus::Succeeded)
+    if(res.result.code != ResultCode::Succeeded)
     {
-      std::cerr << "Failed to inject: " << ToStr(res.status) << std::endl;
-      return (int)res.status;
+      std::cerr << "Failed to inject: " << res.result.Message() << std::endl;
+      return (int)res.result.code;
     }
 
     if(wait_for_exit)
@@ -456,6 +456,7 @@ private:
   std::string host;
   bool daemon = false;
   bool preview = false;
+  uint16_t port = 0;
 
 public:
   RemoteServerCommand() : Command() {}
@@ -465,6 +466,9 @@ public:
     parser.add<std::string>(
         "host", 'h', "The interface to listen on. By default listens on all interfaces", false, "");
     parser.add("preview", 'v', "Display a preview window when a replay is active.");
+    parser.add<uint32_t>(
+        "port", 'p',
+        "The port to listen on. Default is 0, which listens on RenderDoc's default port.", false, 0);
   }
   virtual const char *Description()
   {
@@ -478,12 +482,15 @@ public:
     host = parser.get<std::string>("host");
     daemon = parser.exist("daemon");
     preview = parser.exist("preview");
+    port = parser.get<uint32_t>("port") & 0xffff;
     return true;
   }
   virtual int Execute(const CaptureOptions &)
   {
-    std::cerr << "Spawning a replay host listening on " << (host.empty() ? "*" : host) << "..."
-              << std::endl;
+    std::cerr << "Spawning a replay host listening on " << (host.empty() ? "*" : host);
+    if(port != 0)
+      std::cerr << ":" << port;
+    std::cerr << "..." << std::endl;
 
     if(daemon)
     {
@@ -504,7 +511,7 @@ public:
     if(DisplayRemoteServerPreview(false, {}).system != WindowingSystem::Unknown)
       previewWindow = &DisplayRemoteServerPreview;
 
-    RENDERDOC_BecomeRemoteServer(conv(host), []() { return killSignal; }, previewWindow);
+    RENDERDOC_BecomeRemoteServer(conv(host), port, []() { return killSignal; }, previewWindow);
 
     std::cerr << std::endl << "Cleaning up from replay hosting." << std::endl;
 
@@ -573,12 +580,12 @@ public:
       std::cout << "Replaying '" << filename << "' on " << remote_host << "." << std::endl;
 
       IRemoteServer *remote = NULL;
-      ReplayStatus status = RENDERDOC_CreateRemoteServerConnection(conv(remote_host), &remote);
+      ResultDetails result = RENDERDOC_CreateRemoteServerConnection(conv(remote_host), &remote);
 
-      if(remote == NULL || status != ReplayStatus::Succeeded)
+      if(remote == NULL || result.code != ResultCode::Succeeded)
       {
-        std::cerr << "Error: " << ToStr(status) << " - Couldn't connect to " << remote_host << "."
-                  << std::endl;
+        std::cerr << "Error: " << result.Message() << " - Couldn't connect to " << remote_host
+                  << "." << std::endl;
         std::cerr << "       Have you run renderdoccmd remoteserver on '" << remote_host << "'?"
                   << std::endl;
         return 1;
@@ -589,9 +596,9 @@ public:
       rdcstr remotePath = remote->CopyCaptureToRemote(conv(filename), NULL);
 
       IReplayController *renderer = NULL;
-      rdctie(status, renderer) = remote->OpenCapture(~0U, remotePath, ReplayOptions(), NULL);
+      rdctie(result, renderer) = remote->OpenCapture(~0U, remotePath, ReplayOptions(), NULL);
 
-      if(status == ReplayStatus::Succeeded)
+      if(result.OK())
       {
         DisplayRendererPreview(renderer, width, height, loops);
 
@@ -599,7 +606,8 @@ public:
       }
       else
       {
-        std::cerr << "Couldn't load and replay '" << filename << "': " << ToStr(status) << std::endl;
+        std::cerr << "Couldn't load and replay '" << filename << "': " << result.Message()
+                  << std::endl;
       }
 
       remote->ShutdownConnection();
@@ -610,19 +618,21 @@ public:
 
       ICaptureFile *file = RENDERDOC_OpenCaptureFile();
 
-      if(file->OpenFile(conv(filename), "rdc", NULL) != ReplayStatus::Succeeded)
+      ResultDetails res = file->OpenFile(conv(filename), "rdc", NULL);
+
+      if(res.code != ResultCode::Succeeded)
       {
-        std::cerr << "Couldn't load '" << filename << "'." << std::endl;
+        std::cerr << "Couldn't load '" << filename << "': " << res.Message() << std::endl;
         return 1;
       }
 
       IReplayController *renderer = NULL;
-      ReplayStatus status = ReplayStatus::InternalError;
-      rdctie(status, renderer) = file->OpenCapture(ReplayOptions(), NULL);
+      ResultDetails result = {};
+      rdctie(result, renderer) = file->OpenCapture(ReplayOptions(), NULL);
 
       file->Shutdown();
 
-      if(status == ReplayStatus::Succeeded)
+      if(result.OK())
       {
         DisplayRendererPreview(renderer, width, height, loops);
 
@@ -630,7 +640,8 @@ public:
       }
       else
       {
-        std::cerr << "Couldn't load and replay '" << filename << "': " << ToStr(status) << std::endl;
+        std::cerr << "Couldn't load and replay '" << filename << "': " << result.Message()
+                  << std::endl;
         return 1;
       }
     }
@@ -797,21 +808,21 @@ public:
 
     ICaptureFile *file = RENDERDOC_OpenCaptureFile();
 
-    ReplayStatus st = file->OpenFile(conv(infile), conv(infmt), NULL);
+    ResultDetails st = file->OpenFile(conv(infile), conv(infmt), NULL);
 
-    if(st != ReplayStatus::Succeeded)
+    if(st.code != ResultCode::Succeeded)
     {
-      std::cerr << "Couldn't load '" << infile << "' as '" << infmt << "': " << ToStr(st)
+      std::cerr << "Couldn't load '" << infile << "' as '" << infmt << "': " << st.Message()
                 << std::endl;
       return 1;
     }
 
     st = file->Convert(conv(outfile), conv(outfmt), NULL, NULL);
 
-    if(st != ReplayStatus::Succeeded)
+    if(st.code != ResultCode::Succeeded)
     {
       std::cerr << "Couldn't convert '" << infile << "' to '" << outfile << "' as '" << outfmt
-                << "': " << ToStr(st) << std::endl;
+                << "': " << st.Message() << std::endl;
       return 1;
     }
 
@@ -1007,10 +1018,10 @@ public:
 
     ExecuteResult result = RENDERDOC_InjectIntoProcess(pid, env, conv(capfile), cmdopts, false);
 
-    if(result.status == ReplayStatus::Succeeded)
+    if(result.result.OK())
       return result.ident;
 
-    return (int)result.status;
+    return (int)result.result.code;
   }
 };
 
@@ -1102,12 +1113,12 @@ public:
 
     ICaptureFile *capfile = RENDERDOC_OpenCaptureFile();
 
-    ReplayStatus status = capfile->OpenFile(conv(rdc), "", NULL);
+    ResultDetails result = capfile->OpenFile(conv(rdc), "", NULL);
 
-    if(status != ReplayStatus::Succeeded)
+    if(result.code != ResultCode::Succeeded)
     {
       capfile->Shutdown();
-      std::cerr << "Couldn't load '" << rdc << "': " << ToStr(status) << std::endl;
+      std::cerr << "Couldn't load '" << rdc << "': " << result.Message() << std::endl;
       return 1;
     }
 

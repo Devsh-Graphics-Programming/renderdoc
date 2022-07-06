@@ -14,7 +14,7 @@ For the most part at least some debug information is included with shaders unles
 
 For shader debugging it's recommended that you build with ``/Od`` or ``D3DCOMPILE_SKIP_OPTIMIZATION``, as this will enable HLSL debugging by default.
 
-For more information on how to get this unstripped debug information to renderdoc, see :ref:`unstripped-shader-info`.
+For more information on how to get this unstripped debug information to renderdoc, see :doc:`how_shader_debug_info`.
 
 Debugging a vertex
 ------------------
@@ -144,9 +144,9 @@ The other window will contain variable/mutable registers. These contain temporar
 
 The final window is initially empty but can be filled out as needed. This shows custom watch expressions and their values. Here you can write any expression involving an input, temporary or output register along with a swizzle and typecast. When debug information is present you can also include locals here.
 
-Swizzles follow the standard hlsl rules - ``.[xyzw]`` or ``.[rgba]`` in any permutation or repetition will show those channels.
+Swizzles follow the standard hlsl & glsl rules - ``.[xyzw]`` or ``.[rgba]`` in any permutation or repetition will show those channels.
 
-The custom typecast can be any of ``,x`` ``,i`` ``,d`` ``,f`` ``,u`` ``,b`` to display the register as hex, signed integer, double, float, unsigned, or bitwise respectively.
+The custom typecast can be any of ``,u`` ``,i`` ``,f`` ``,x`` ``,o`` ``,b`` to display the register as unsigned integer, signed integer, float, hex, octal, or binary respectively. You can also specify ``,c`` to specify a color value, and show a small RGB swatch next to the floating point value with the effective color.
 
 .. figure:: ../imgs/Screenshots/ShaderWatch.png
 

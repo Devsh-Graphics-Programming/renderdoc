@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -744,9 +744,8 @@ float4 main() : SV_Target0
       vkh::updateDescriptorSets(
           device, {
                       vkh::WriteDescriptorSet(
-                          descset, 1, VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT,
-                          {vkh::DescriptorBufferInfo(cb.buffer, bindOffset * sizeof(Vec4f))})
-                          .next(&inlineUpdate),
+                          descset, 1, inlineUpdate,
+                          vkh::DescriptorBufferInfo(cb.buffer, bindOffset * sizeof(Vec4f))),
                   });
     }
     else

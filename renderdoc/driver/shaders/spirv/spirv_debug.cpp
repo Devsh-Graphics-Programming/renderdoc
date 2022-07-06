@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2021 Baldur Karlsson
+ * Copyright (c) 2020-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -184,9 +184,14 @@ void ThreadState::EnterFunction(const rdcarray<Id> &arguments)
 
   frame->locals.resize(numVars);
 
-  // don't add source vars for variables, we'll add it on the first store
   ShaderDebugState *state = m_State;
-  m_State = NULL;
+
+  // don't add variables if we don't have debug info, we'll add it on the first store to reduce
+  // noise on unoptimised shaders with lots of variables and no scope information. However if we
+  // have debug info we'll add the variable immediately because the source variable will only be
+  // added at the correct scope and we want to display that before it's stored to.
+  if(!debugger.HasDebugInfo())
+    m_State = NULL;
 
   size_t i = 0;
   // handle any variable declarations
@@ -310,6 +315,14 @@ void ThreadState::WritePointerValue(Id pointer, const ShaderVariable &val)
       basechange.before.name = "";
 
     m_State->changes.push_back(basechange);
+
+    if(ptrIdx == -1)
+      pointers.push_back(pointer);
+    if(!pointers.contains(ptrid) && ptrid != Id())
+      pointers.push_back(ptrid);
+
+    for(size_t i = 0; i < pointers.size(); i++)
+      lastWrite[pointers[i]] = nextInstruction;
   }
 }
 
@@ -325,6 +338,8 @@ void ThreadState::SetDst(Id id, const ShaderVariable &val)
 
   ids[id] = val;
   ids[id].name = debugger.GetRawName(id);
+
+  lastWrite[id] = nextInstruction;
 
   auto it = std::lower_bound(live.begin(), live.end(), id);
   live.insert(it - live.begin(), id);
@@ -542,23 +557,6 @@ bool ThreadState::ReferencePointer(Id id)
         break;
       }
     }
-
-    // otherwise if we have sourcevars referencing this ID, shuffle them to the back as they are
-    // newly touched.
-    rdcarray<SourceVariableMapping> refs;
-    for(size_t i = 0; i < sourceVars.size();)
-    {
-      if(!sourceVars[i].variables.empty() && sourceVars[i].variables[0].name == name)
-      {
-        refs.push_back(sourceVars[i]);
-        sourceVars.erase(i);
-        continue;
-      }
-
-      i++;
-    }
-
-    sourceVars.append(refs);
   }
 
   return firstLocalWrite;
@@ -577,6 +575,15 @@ void ThreadState::SkipIgnoredInstructions()
     {
       nextInstruction++;
       continue;
+    }
+
+    if(op == Op::ExtInst)
+    {
+      if(debugger.IsDebugExtInstSet(Id::fromWord(it.word(3))))
+      {
+        nextInstruction++;
+        continue;
+      }
     }
 
     if(op == Op::SelectionMerge)
@@ -2227,7 +2234,7 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
       ShaderVariable result;
       result.rows = 1;
       result.columns = 1;
-      result.isStruct = true;
+      result.type = VarType::Struct;
       result.members = {lsb, msb};
       result.members[0].name = "lsb";
       result.members[1].name = "msb";
@@ -2475,7 +2482,7 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
       ShaderVariable result;
       result.rows = 1;
       result.columns = 1;
-      result.isStruct = true;
+      result.type = VarType::Struct;
       result.members = {GetSrc(sampled.image), GetSrc(sampled.sampler)};
       result.members[0].name = "image";
       result.members[1].name = "sampler";
@@ -3015,7 +3022,7 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
       ShaderVariable result;
       result.rows = 1;
       result.columns = 1;
-      result.isStruct = true;
+      result.type = VarType::Struct;
       result.members = {ReadPointerValue(ptr.image), GetSrc(ptr.coordinate), GetSrc(ptr.sample)};
       result.members[0].name = "image";
       result.members[1].name = "coord";
@@ -3482,6 +3489,15 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
     case Op::SDotAccSatKHR:
     case Op::UDotAccSatKHR:
     case Op::SUDotAccSatKHR:
+
+    case Op::GroupIMulKHR:
+    case Op::GroupFMulKHR:
+    case Op::GroupBitwiseAndKHR:
+    case Op::GroupBitwiseOrKHR:
+    case Op::GroupBitwiseXorKHR:
+    case Op::GroupLogicalAndKHR:
+    case Op::GroupLogicalOrKHR:
+    case Op::GroupLogicalXorKHR:
     {
       RDCERR("Group opcodes not supported. SPIR-V should have been rejected by capability!");
 
@@ -3578,125 +3594,6 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
     case Op::USubSatINTEL:
     case Op::IMul32x16INTEL:
     case Op::UMul32x16INTEL:
-    case Op::VmeImageINTEL:
-    case Op::TypeVmeImageINTEL:
-    case Op::TypeAvcImePayloadINTEL:
-    case Op::TypeAvcRefPayloadINTEL:
-    case Op::TypeAvcSicPayloadINTEL:
-    case Op::TypeAvcMcePayloadINTEL:
-    case Op::TypeAvcMceResultINTEL:
-    case Op::TypeAvcImeResultINTEL:
-    case Op::TypeAvcImeResultSingleReferenceStreamoutINTEL:
-    case Op::TypeAvcImeResultDualReferenceStreamoutINTEL:
-    case Op::TypeAvcImeSingleReferenceStreaminINTEL:
-    case Op::TypeAvcImeDualReferenceStreaminINTEL:
-    case Op::TypeAvcRefResultINTEL:
-    case Op::TypeAvcSicResultINTEL:
-    case Op::SubgroupAvcMceGetDefaultInterBaseMultiReferencePenaltyINTEL:
-    case Op::SubgroupAvcMceSetInterBaseMultiReferencePenaltyINTEL:
-    case Op::SubgroupAvcMceGetDefaultInterShapePenaltyINTEL:
-    case Op::SubgroupAvcMceSetInterShapePenaltyINTEL:
-    case Op::SubgroupAvcMceGetDefaultInterDirectionPenaltyINTEL:
-    case Op::SubgroupAvcMceSetInterDirectionPenaltyINTEL:
-    case Op::SubgroupAvcMceGetDefaultIntraLumaShapePenaltyINTEL:
-    case Op::SubgroupAvcMceGetDefaultInterMotionVectorCostTableINTEL:
-    case Op::SubgroupAvcMceGetDefaultHighPenaltyCostTableINTEL:
-    case Op::SubgroupAvcMceGetDefaultMediumPenaltyCostTableINTEL:
-    case Op::SubgroupAvcMceGetDefaultLowPenaltyCostTableINTEL:
-    case Op::SubgroupAvcMceSetMotionVectorCostFunctionINTEL:
-    case Op::SubgroupAvcMceGetDefaultIntraLumaModePenaltyINTEL:
-    case Op::SubgroupAvcMceGetDefaultNonDcLumaIntraPenaltyINTEL:
-    case Op::SubgroupAvcMceGetDefaultIntraChromaModeBasePenaltyINTEL:
-    case Op::SubgroupAvcMceSetAcOnlyHaarINTEL:
-    case Op::SubgroupAvcMceSetSourceInterlacedFieldPolarityINTEL:
-    case Op::SubgroupAvcMceSetSingleReferenceInterlacedFieldPolarityINTEL:
-    case Op::SubgroupAvcMceSetDualReferenceInterlacedFieldPolaritiesINTEL:
-    case Op::SubgroupAvcMceConvertToImePayloadINTEL:
-    case Op::SubgroupAvcMceConvertToImeResultINTEL:
-    case Op::SubgroupAvcMceConvertToRefPayloadINTEL:
-    case Op::SubgroupAvcMceConvertToRefResultINTEL:
-    case Op::SubgroupAvcMceConvertToSicPayloadINTEL:
-    case Op::SubgroupAvcMceConvertToSicResultINTEL:
-    case Op::SubgroupAvcMceGetMotionVectorsINTEL:
-    case Op::SubgroupAvcMceGetInterDistortionsINTEL:
-    case Op::SubgroupAvcMceGetBestInterDistortionsINTEL:
-    case Op::SubgroupAvcMceGetInterMajorShapeINTEL:
-    case Op::SubgroupAvcMceGetInterMinorShapeINTEL:
-    case Op::SubgroupAvcMceGetInterDirectionsINTEL:
-    case Op::SubgroupAvcMceGetInterMotionVectorCountINTEL:
-    case Op::SubgroupAvcMceGetInterReferenceIdsINTEL:
-    case Op::SubgroupAvcMceGetInterReferenceInterlacedFieldPolaritiesINTEL:
-    case Op::SubgroupAvcImeInitializeINTEL:
-    case Op::SubgroupAvcImeSetSingleReferenceINTEL:
-    case Op::SubgroupAvcImeSetDualReferenceINTEL:
-    case Op::SubgroupAvcImeRefWindowSizeINTEL:
-    case Op::SubgroupAvcImeAdjustRefOffsetINTEL:
-    case Op::SubgroupAvcImeConvertToMcePayloadINTEL:
-    case Op::SubgroupAvcImeSetMaxMotionVectorCountINTEL:
-    case Op::SubgroupAvcImeSetUnidirectionalMixDisableINTEL:
-    case Op::SubgroupAvcImeSetEarlySearchTerminationThresholdINTEL:
-    case Op::SubgroupAvcImeSetWeightedSadINTEL:
-    case Op::SubgroupAvcImeEvaluateWithSingleReferenceINTEL:
-    case Op::SubgroupAvcImeEvaluateWithDualReferenceINTEL:
-    case Op::SubgroupAvcImeEvaluateWithSingleReferenceStreaminINTEL:
-    case Op::SubgroupAvcImeEvaluateWithDualReferenceStreaminINTEL:
-    case Op::SubgroupAvcImeEvaluateWithSingleReferenceStreamoutINTEL:
-    case Op::SubgroupAvcImeEvaluateWithDualReferenceStreamoutINTEL:
-    case Op::SubgroupAvcImeEvaluateWithSingleReferenceStreaminoutINTEL:
-    case Op::SubgroupAvcImeEvaluateWithDualReferenceStreaminoutINTEL:
-    case Op::SubgroupAvcImeConvertToMceResultINTEL:
-    case Op::SubgroupAvcImeGetSingleReferenceStreaminINTEL:
-    case Op::SubgroupAvcImeGetDualReferenceStreaminINTEL:
-    case Op::SubgroupAvcImeStripSingleReferenceStreamoutINTEL:
-    case Op::SubgroupAvcImeStripDualReferenceStreamoutINTEL:
-    case Op::SubgroupAvcImeGetStreamoutSingleReferenceMajorShapeMotionVectorsINTEL:
-    case Op::SubgroupAvcImeGetStreamoutSingleReferenceMajorShapeDistortionsINTEL:
-    case Op::SubgroupAvcImeGetStreamoutSingleReferenceMajorShapeReferenceIdsINTEL:
-    case Op::SubgroupAvcImeGetStreamoutDualReferenceMajorShapeMotionVectorsINTEL:
-    case Op::SubgroupAvcImeGetStreamoutDualReferenceMajorShapeDistortionsINTEL:
-    case Op::SubgroupAvcImeGetStreamoutDualReferenceMajorShapeReferenceIdsINTEL:
-    case Op::SubgroupAvcImeGetBorderReachedINTEL:
-    case Op::SubgroupAvcImeGetTruncatedSearchIndicationINTEL:
-    case Op::SubgroupAvcImeGetUnidirectionalEarlySearchTerminationINTEL:
-    case Op::SubgroupAvcImeGetWeightingPatternMinimumMotionVectorINTEL:
-    case Op::SubgroupAvcImeGetWeightingPatternMinimumDistortionINTEL:
-    case Op::SubgroupAvcFmeInitializeINTEL:
-    case Op::SubgroupAvcBmeInitializeINTEL:
-    case Op::SubgroupAvcRefConvertToMcePayloadINTEL:
-    case Op::SubgroupAvcRefSetBidirectionalMixDisableINTEL:
-    case Op::SubgroupAvcRefSetBilinearFilterEnableINTEL:
-    case Op::SubgroupAvcRefEvaluateWithSingleReferenceINTEL:
-    case Op::SubgroupAvcRefEvaluateWithDualReferenceINTEL:
-    case Op::SubgroupAvcRefEvaluateWithMultiReferenceINTEL:
-    case Op::SubgroupAvcRefEvaluateWithMultiReferenceInterlacedINTEL:
-    case Op::SubgroupAvcRefConvertToMceResultINTEL:
-    case Op::SubgroupAvcSicInitializeINTEL:
-    case Op::SubgroupAvcSicConfigureSkcINTEL:
-    case Op::SubgroupAvcSicConfigureIpeLumaINTEL:
-    case Op::SubgroupAvcSicConfigureIpeLumaChromaINTEL:
-    case Op::SubgroupAvcSicGetMotionVectorMaskINTEL:
-    case Op::SubgroupAvcSicConvertToMcePayloadINTEL:
-    case Op::SubgroupAvcSicSetIntraLumaShapePenaltyINTEL:
-    case Op::SubgroupAvcSicSetIntraLumaModeCostFunctionINTEL:
-    case Op::SubgroupAvcSicSetIntraChromaModeCostFunctionINTEL:
-    case Op::SubgroupAvcSicSetBilinearFilterEnableINTEL:
-    case Op::SubgroupAvcSicSetSkcForwardTransformEnableINTEL:
-    case Op::SubgroupAvcSicSetBlockBasedRawSkipSadINTEL:
-    case Op::SubgroupAvcSicEvaluateIpeINTEL:
-    case Op::SubgroupAvcSicEvaluateWithSingleReferenceINTEL:
-    case Op::SubgroupAvcSicEvaluateWithDualReferenceINTEL:
-    case Op::SubgroupAvcSicEvaluateWithMultiReferenceINTEL:
-    case Op::SubgroupAvcSicEvaluateWithMultiReferenceInterlacedINTEL:
-    case Op::SubgroupAvcSicConvertToMceResultINTEL:
-    case Op::SubgroupAvcSicGetIpeLumaShapeINTEL:
-    case Op::SubgroupAvcSicGetBestIpeLumaDistortionINTEL:
-    case Op::SubgroupAvcSicGetBestIpeChromaDistortionINTEL:
-    case Op::SubgroupAvcSicGetPackedIpeLumaModesINTEL:
-    case Op::SubgroupAvcSicGetIpeChromaModeINTEL:
-    case Op::SubgroupAvcSicGetPackedSkcLumaCountThresholdINTEL:
-    case Op::SubgroupAvcSicGetPackedSkcLumaSumThresholdINTEL:
-    case Op::SubgroupAvcSicGetInterRawSadsINTEL:
-    case Op::FunctionPointerCallINTEL:
     case Op::LoopControlINTEL:
     case Op::RayQueryGetRayTMinKHR:
     case Op::RayQueryGetRayFlagsKHR:
@@ -3727,69 +3624,8 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
     case Op::ConvertUToAccelerationStructureKHR:
     case Op::IgnoreIntersectionKHR:
     case Op::TerminateRayKHR:
-    case Op::AsmINTEL:
-    case Op::VariableLengthArrayINTEL:
     case Op::TraceMotionNV:
     case Op::TraceRayMotionNV:
-    case Op::ConstantFunctionPointerINTEL:
-    case Op::AsmTargetINTEL:
-    case Op::AsmCallINTEL:
-    case Op::SaveMemoryINTEL:
-    case Op::RestoreMemoryINTEL:
-    case Op::ArbitraryFloatSinCosPiINTEL:
-    case Op::ArbitraryFloatCastINTEL:
-    case Op::ArbitraryFloatCastFromIntINTEL:
-    case Op::ArbitraryFloatCastToIntINTEL:
-    case Op::ArbitraryFloatAddINTEL:
-    case Op::ArbitraryFloatSubINTEL:
-    case Op::ArbitraryFloatMulINTEL:
-    case Op::ArbitraryFloatDivINTEL:
-    case Op::ArbitraryFloatGTINTEL:
-    case Op::ArbitraryFloatGEINTEL:
-    case Op::ArbitraryFloatLTINTEL:
-    case Op::ArbitraryFloatLEINTEL:
-    case Op::ArbitraryFloatEQINTEL:
-    case Op::ArbitraryFloatRecipINTEL:
-    case Op::ArbitraryFloatRSqrtINTEL:
-    case Op::ArbitraryFloatCbrtINTEL:
-    case Op::ArbitraryFloatHypotINTEL:
-    case Op::ArbitraryFloatSqrtINTEL:
-    case Op::ArbitraryFloatLogINTEL:
-    case Op::ArbitraryFloatLog2INTEL:
-    case Op::ArbitraryFloatLog10INTEL:
-    case Op::ArbitraryFloatLog1pINTEL:
-    case Op::ArbitraryFloatExpINTEL:
-    case Op::ArbitraryFloatExp2INTEL:
-    case Op::ArbitraryFloatExp10INTEL:
-    case Op::ArbitraryFloatExpm1INTEL:
-    case Op::ArbitraryFloatSinINTEL:
-    case Op::ArbitraryFloatCosINTEL:
-    case Op::ArbitraryFloatSinCosINTEL:
-    case Op::ArbitraryFloatSinPiINTEL:
-    case Op::ArbitraryFloatCosPiINTEL:
-    case Op::ArbitraryFloatASinINTEL:
-    case Op::ArbitraryFloatASinPiINTEL:
-    case Op::ArbitraryFloatACosINTEL:
-    case Op::ArbitraryFloatACosPiINTEL:
-    case Op::ArbitraryFloatATanINTEL:
-    case Op::ArbitraryFloatATanPiINTEL:
-    case Op::ArbitraryFloatATan2INTEL:
-    case Op::ArbitraryFloatPowINTEL:
-    case Op::ArbitraryFloatPowRINTEL:
-    case Op::ArbitraryFloatPowNINTEL:
-    case Op::FixedSqrtINTEL:
-    case Op::FixedRecipINTEL:
-    case Op::FixedRsqrtINTEL:
-    case Op::FixedSinINTEL:
-    case Op::FixedCosINTEL:
-    case Op::FixedSinCosINTEL:
-    case Op::FixedSinPiINTEL:
-    case Op::FixedCosPiINTEL:
-    case Op::FixedSinCosPiINTEL:
-    case Op::FixedLogINTEL:
-    case Op::FixedExpINTEL:
-    case Op::PtrCastToCrossWorkgroupINTEL:
-    case Op::CrossWorkgroupCastToPtrINTEL:
     case Op::TypeBufferSurfaceINTEL:
     case Op::TypeStructContinuedINTEL:
     case Op::ConstantCompositeContinuedINTEL:
@@ -3935,6 +3771,8 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
     case Op::FPGARegINTEL:
     case Op::ReadPipeBlockingINTEL:
     case Op::WritePipeBlockingINTEL:
+    case Op::ControlBarrierArriveINTEL:
+    case Op::ControlBarrierWaitINTEL:
     {
       // these are kernel only
       RDCERR("Encountered unexpected kernel SPIR-V operation %s", ToStr(opdata.op).c_str());
@@ -3957,7 +3795,7 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
   }
 
   // skip over any degenerate branches
-  while(true)
+  while(!debugger.HasDebugInfo())
   {
     it = debugger.GetIterForInstruction(nextInstruction);
     if(it.opcode() == Op::Branch)

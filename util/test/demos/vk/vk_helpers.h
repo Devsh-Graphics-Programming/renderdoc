@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2021 Baldur Karlsson
+* Copyright (c) 2019-2022 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -912,6 +912,22 @@ struct WriteDescriptorSet : public VkWriteDescriptorSet
     this->pTexelBufferView = NULL;
   }
 
+  WriteDescriptorSet(VkDescriptorSet dstSet, uint32_t dstBinding,
+                     const VkWriteDescriptorSetInlineUniformBlockEXT &inlineWrite,
+                     const VkDescriptorBufferInfo &bufferInfo)
+  {
+    sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    pNext = &inlineWrite;
+    this->dstSet = dstSet;
+    this->dstBinding = dstBinding;
+    this->dstArrayElement = 0;
+    this->descriptorCount = inlineWrite.dataSize;
+    this->descriptorType = VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT;
+    this->pImageInfo = NULL;
+    this->pBufferInfo = &bufferInfo;
+    this->pTexelBufferView = NULL;
+  }
+
   WriteDescriptorSet(VkDescriptorSet dstSet, uint32_t dstBinding, VkDescriptorType descriptorType,
                      const std::vector<VkDescriptorBufferInfo> &bufferInfo)
       : WriteDescriptorSet(dstSet, dstBinding, 0, descriptorType, bufferInfo)
@@ -1138,6 +1154,14 @@ struct ClearColorValue
   };
 
   operator const VkClearColorValue *() const { return (VkClearColorValue *)this; }
+};
+
+struct ClearDepthStencilValue
+{
+  float depth;
+  uint32_t stencil;
+
+  operator const VkClearDepthStencilValue *() const { return (VkClearDepthStencilValue *)this; }
 };
 
 struct ClearValue

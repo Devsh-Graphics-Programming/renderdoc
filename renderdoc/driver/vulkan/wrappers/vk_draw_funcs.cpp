@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -914,6 +914,8 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(SerialiserType &ser,
             {
               uint32_t drawidx = 0;
 
+              ActionDescription *action = m_Actions[curEID];
+
               if(m_FirstEventID <= 1)
               {
                 // if we're replaying part-way into a multidraw, we can replay the first part
@@ -921,6 +923,12 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(SerialiserType &ser,
                 // by just reducing the Count parameter to however many we want to replay. This only
                 // works if we're replaying from the first multidraw to the nth (n less than Count)
                 count = RDCMIN(count, m_LastEventID - baseEventID);
+              }
+              else if(action->flags & ActionFlags::PopMarker)
+              {
+                // if the popmarker is selected (most likely implicitly by a parent marker)
+                // don't replay anything and don't try to set up the indirect buffer.
+                count = 0;
               }
               else
               {
@@ -996,7 +1004,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(SerialiserType &ser,
                 stride = sizeof(VkDrawIndexedIndirectCommand);
               }
 
-              if(IsDrawInRenderPass())
+              if(IsDrawInRenderPass() && count > 0)
               {
                 uint32_t eventId =
                     HandlePreCallback(commandBuffer, ActionFlags::Drawcall, drawidx + 1);
@@ -2116,6 +2124,104 @@ void WrappedVulkan::vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcB
 }
 
 template <typename SerialiserType>
+bool WrappedVulkan::Serialise_vkCmdUpdateBuffer(SerialiserType &ser, VkCommandBuffer commandBuffer,
+                                                VkBuffer destBuffer, VkDeviceSize destOffset,
+                                                VkDeviceSize dataSize, const uint32_t *pData)
+{
+  SERIALISE_ELEMENT(commandBuffer);
+  SERIALISE_ELEMENT(destBuffer).Important();
+  SERIALISE_ELEMENT(destOffset);
+  SERIALISE_ELEMENT(dataSize);
+
+  // serialise as void* so it goes through as a buffer, not an actual array of integers.
+  const void *Data = (const void *)pData;
+  SERIALISE_ELEMENT_ARRAY(Data, dataSize).Important();
+
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
+  {
+    m_LastCmdBufferID = GetResourceManager()->GetOriginalID(GetResID(commandBuffer));
+
+    if(IsActiveReplaying(m_State))
+    {
+      if(InRerecordRange(m_LastCmdBufferID))
+      {
+        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
+
+        uint32_t eventId = HandlePreCallback(commandBuffer, ActionFlags::Copy);
+
+        ObjDisp(commandBuffer)
+            ->CmdUpdateBuffer(Unwrap(commandBuffer), Unwrap(destBuffer), destOffset, dataSize, Data);
+
+        if(eventId && m_ActionCallback->PostMisc(eventId, ActionFlags::Copy, commandBuffer))
+        {
+          ObjDisp(commandBuffer)
+              ->CmdUpdateBuffer(Unwrap(commandBuffer), Unwrap(destBuffer), destOffset, dataSize,
+                                Data);
+
+          m_ActionCallback->PostRemisc(eventId, ActionFlags::Copy, commandBuffer);
+        }
+      }
+    }
+    else
+    {
+      ObjDisp(commandBuffer)
+          ->CmdUpdateBuffer(Unwrap(commandBuffer), Unwrap(destBuffer), destOffset, dataSize, Data);
+
+      {
+        AddEvent();
+
+        ResourceId id = GetResourceManager()->GetOriginalID(GetResID(destBuffer));
+
+        ActionDescription action;
+        action.flags = ActionFlags::Copy;
+        action.copyDestination = id;
+        action.copyDestinationSubresource = Subresource();
+
+        AddAction(action);
+
+        VulkanActionTreeNode &actionNode = GetActionStack().back()->children.back();
+
+        actionNode.resourceUsage.push_back(make_rdcpair(
+            GetResID(destBuffer), EventUsage(actionNode.action.eventId, ResourceUsage::CopyDst)));
+      }
+    }
+  }
+
+  return true;
+}
+
+void WrappedVulkan::vkCmdUpdateBuffer(VkCommandBuffer commandBuffer, VkBuffer destBuffer,
+                                      VkDeviceSize destOffset, VkDeviceSize dataSize,
+                                      const uint32_t *pData)
+{
+  SCOPED_DBG_SINK();
+
+  SERIALISE_TIME_CALL(ObjDisp(commandBuffer)
+                          ->CmdUpdateBuffer(Unwrap(commandBuffer), Unwrap(destBuffer), destOffset,
+                                            dataSize, pData));
+
+  if(IsCaptureMode(m_State))
+  {
+    VkResourceRecord *record = GetRecord(commandBuffer);
+
+    CACHE_THREAD_SERIALISER();
+
+    ser.SetActionChunk();
+    SCOPED_SERIALISE_CHUNK(VulkanChunk::vkCmdUpdateBuffer);
+    Serialise_vkCmdUpdateBuffer(ser, commandBuffer, destBuffer, destOffset, dataSize, pData);
+
+    record->AddChunk(scope.Get(&record->cmdInfo->alloc));
+
+    record->MarkBufferFrameReferenced(GetRecord(destBuffer), destOffset, dataSize,
+                                      eFrameRef_CompleteWrite);
+  }
+}
+
+template <typename SerialiserType>
 bool WrappedVulkan::Serialise_vkCmdFillBuffer(SerialiserType &ser, VkCommandBuffer commandBuffer,
                                               VkBuffer destBuffer, VkDeviceSize destOffset,
                                               VkDeviceSize fillSize, uint32_t data)
@@ -2197,6 +2303,7 @@ void WrappedVulkan::vkCmdFillBuffer(VkCommandBuffer commandBuffer, VkBuffer dest
 
     CACHE_THREAD_SERIALISER();
 
+    ser.SetActionChunk();
     SCOPED_SERIALISE_CHUNK(VulkanChunk::vkCmdFillBuffer);
     Serialise_vkCmdFillBuffer(ser, commandBuffer, destBuffer, destOffset, fillSize, data);
 
@@ -4347,6 +4454,10 @@ INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdCopyBufferToImage, VkCommandBuffer co
 INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdCopyImageToBuffer, VkCommandBuffer commandBuffer,
                                 VkImage srcImage, VkImageLayout srcImageLayout, VkBuffer dstBuffer,
                                 uint32_t regionCount, const VkBufferImageCopy *pRegions);
+
+INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdUpdateBuffer, VkCommandBuffer commandBuffer,
+                                VkBuffer dstBuffer, VkDeviceSize dstOffset, VkDeviceSize dataSize,
+                                const uint32_t *pData);
 
 INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdFillBuffer, VkCommandBuffer commandBuffer,
                                 VkBuffer dstBuffer, VkDeviceSize dstOffset, VkDeviceSize fillSize,

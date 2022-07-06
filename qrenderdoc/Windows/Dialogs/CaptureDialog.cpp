@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -893,15 +893,15 @@ void CaptureDialog::on_toggleGlobal_clicked()
 
     QString capturefile = m_Ctx.TempCaptureFilename(QFileInfo(exe).baseName());
 
-    bool success = RENDERDOC_StartGlobalHook(exe, capturefile, Settings().options);
+    ResultDetails success = RENDERDOC_StartGlobalHook(exe, capturefile, Settings().options);
 
-    if(!success)
+    if(!success.OK())
     {
       // tidy up and exit
-      RDDialog::critical(
-          this, tr("Couldn't start global hook"),
-          tr("Aborting. Couldn't start global hook. Check diagnostic log in help menu for more "
-             "information"));
+      RDDialog::critical(this, tr("Couldn't start global hook"),
+                         tr("Aborting. Couldn't start global hook.\n"
+                            "%1")
+                             .arg(success.Message()));
 
       setEnabledMultiple(enableDisableWidgets, true);
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -138,10 +138,10 @@ static void EnsureRealLibraryLoaded()
     if(!RenderDoc::Inst().IsReplayApp())
       RDCLOG("Loading libEGL at the last second");
 
-    void *handle = Process::LoadModule("libEGL.so");
+    void *handle = Process::LoadModule("libEGL.so.1");
 
     if(!handle)
-      handle = Process::LoadModule("libEGL.so.1");
+      handle = Process::LoadModule("libEGL.so");
 
     if(RenderDoc::Inst().IsReplayApp())
       eglhook.handle = handle;
@@ -908,6 +908,14 @@ static void EGLHooked(void *handle)
   if(!EGL.func && CheckConstParam(isext))                                                       \
     EGL.func = (CONCAT(PFN_egl, func))EGL.GetProcAddress("egl" STRINGIZE(func));
   EGL_NONHOOKED_SYMBOLS(EGL_FETCH)
+#undef EGL_FETCH
+
+// fetch any hooked extension functions into our dispatch table since they're not necessarily
+// exported
+#define EGL_FETCH(func, isext, replayrequired) \
+  if(!EGL.func)                                \
+    EGL.func = (CONCAT(PFN_egl, func))EGL.GetProcAddress("egl" STRINGIZE(func));
+  EGL_HOOKED_SYMBOLS(EGL_FETCH)
 #undef EGL_FETCH
 
 // on systems where EGL isn't the primary/only way to get GL function pointers, we need to ensure we

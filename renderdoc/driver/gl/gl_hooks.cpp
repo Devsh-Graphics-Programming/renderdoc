@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -55,6 +55,7 @@ public:
 
   void RegisterHooks();
 
+  void UseUnusedSupportedFunction(const char *name);
   void *GetUnsupportedFunction(const char *name);
 
   void *handle = NULL;
@@ -215,6 +216,13 @@ void *HookedGetProcAddress(const char *func, void *realFunc)
   return realFunc;
 }
 
+void GLHook::UseUnusedSupportedFunction(const char *name)
+{
+  SCOPED_LOCK(glLock);
+  if(glhook.driver)
+    glhook.driver->UseUnusedSupportedFunction(name);
+}
+
 void *GLHook::GetUnsupportedFunction(const char *name)
 {
 #if ENABLED(RDOC_APPLE)
@@ -277,12 +285,29 @@ void GLHook::RegisterHooks()
 
   LibraryHooks::RegisterLibraryHook(libraryName, &GLHooked);
 
-#define RegisterFunc(func, name)      \
-  LibraryHooks::RegisterFunctionHook( \
-      libraryName,                    \
-      FunctionHook(STRINGIZE(name), (void **)&GL.func, (void *)&CONCAT(func, _renderdoc_hooked)));
+  // MSVC compiles this function to use a huge amount of stack by initialising all the FunctionHook
+  // locals all at once. So we instead explicitly re-use the same hook (since it's going to be
+  // copied anyway, these are temporaries).
+  FunctionHook tmphook;
+
+#define RegisterFunc(func, name)                              \
+  {                                                           \
+    tmphook.function = STRINGIZE(name);                       \
+    tmphook.orig = (void **)&GL.func;                         \
+    tmphook.hook = (void *)&CONCAT(func, _renderdoc_hooked);  \
+    LibraryHooks::RegisterFunctionHook(libraryName, tmphook); \
+  }
+
+#define RegisterUnsupportedFunc(name)                         \
+  {                                                           \
+    tmphook.function = STRINGIZE(name);                       \
+    tmphook.orig = NULL;                                      \
+    tmphook.hook = (void *)&CONCAT(name, _renderdoc_hooked);  \
+    LibraryHooks::RegisterFunctionHook(libraryName, tmphook); \
+  }
 
   ForEachSupported(RegisterFunc);
+  ForEachUnsupported(RegisterUnsupportedFunc);
 
 #if ENABLED(RDOC_WIN32)
   if(ShouldHookEGL())

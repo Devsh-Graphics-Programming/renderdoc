@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -53,7 +53,7 @@ struct VkInitParams
   uint64_t GetSerialiseSize();
 
   // check if a frame capture section version is supported
-  static const uint64_t CurrentVersion = 0x13;
+  static const uint64_t CurrentVersion = 0x14;
   static bool IsSupportedVersion(uint64_t ver);
 };
 
@@ -240,6 +240,12 @@ struct VulkanActionCallback
   // command buffer in pCommandBuffers.
   virtual bool SplitSecondary() = 0;
 
+  // Returns true if secondary command buffer inheritance info should be modified so
+  // it uses the load FB/RP instead of the original FB/RP. This is mostly used when a callback is
+  // starting/stopping RPs around every execute, so it resumes with the load RP which must
+  // match.
+  virtual bool ForceLoadRPs() = 0;
+
   // called before vkCmdExecuteCommands with a range for the draws inside the
   // secondary command buffer.
   virtual void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
@@ -290,7 +296,7 @@ private:
   void AddDebugMessage(DebugMessage msg);
 
   int m_OOMHandler = 0;
-  ReplayStatus m_FatalError = ReplayStatus::Succeeded;
+  RDResult m_FatalError = ResultCode::Succeeded;
   CaptureState m_State;
   bool m_AppControlledCapture = false;
 
@@ -409,6 +415,7 @@ private:
   bool m_NULLDescriptorsAllowed = false;
   bool m_ExtendedDynState = false;
   bool m_ExtendedDynState2 = false;
+  bool m_FragmentShadingRate = false;
   bool m_DynColorWrite = false;
   bool m_DynVertexInput = false;
 
@@ -613,6 +620,21 @@ private:
 
     rdcflatmap<ResourceId, ImageState> imageStates;
 
+    // whether the renderdoc commandbuffer execution has a renderpass currently open and replaying
+    // and expects nextSubpass/endRPass/endRendering commands to be executed even if partial
+    bool renderPassOpen = false;
+
+    // barriers executed by nextSubpass/endRP executions after the last active subpass, to revert
+    // after executing said commands and keep the target-EID layout
+    rdcarray<VkImageMemoryBarrier> endBarriers;
+
+    // subpass currently active in the commandbuffer's renderpass. The subpass counter in
+    // VulkanRenderState stops
+    // after the selected drawcall in the case of a partial replay, but this one increments with
+    // every call to
+    // vkCmdNextSubpass for valid barrier counting.
+    int activeSubpass = 0;
+
     ResourceId pushDescriptorID[2][64];
 
     VulkanActionTreeNode *action;    // the root action to copy from when submitting
@@ -722,6 +744,7 @@ private:
   bool InRerecordRange(ResourceId cmdid);
   bool HasRerecordCmdBuf(ResourceId cmdid);
   bool ShouldUpdateRenderState(ResourceId cmdid, bool forcePrimary = false);
+  bool IsRenderpassOpen(ResourceId cmdid);
   VkCommandBuffer RerecordCmdBuf(ResourceId cmdid, PartialReplayIndex partialType = ePartialNum);
 
   ResourceId GetPartialCommandBuffer();
@@ -748,6 +771,11 @@ private:
   // capture-side data
 
   ResourceId m_LastSwap;
+
+  // When capturing in VR mode (no conventional present), resource of the vkImage that the VR
+  // runtime
+  // specifies as last backbuffer through the VR backbuffer tag
+  ResourceId m_CurrentVRBackbuffer;
 
   // hold onto device address resources (buffers and memories) so that if one is destroyed
   // mid-capture we can hold onto it until the capture is complete.
@@ -850,7 +878,7 @@ private:
   template <class T>
   T UnwrapInfo(const T *info);
   template <class T>
-  T *UnwrapInfos(const T *infos, uint32_t count);
+  T *UnwrapInfos(CaptureState state, const T *infos, uint32_t count);
 
   void PatchAttachment(VkFramebufferAttachmentImageInfo *att, VkFormat imgFormat,
                        VkSampleCountFlagBits samples);
@@ -919,7 +947,7 @@ private:
 
   std::set<ResourceId> m_SparseBindResources;
 
-  ReplayStatus m_FailedReplayStatus = ReplayStatus::APIReplayFailed;
+  RDResult m_FailedReplayResult = ResultCode::APIReplayFailed;
 
   VulkanActionTreeNode m_ParentAction;
 
@@ -951,8 +979,8 @@ private:
   }
 
   bool ProcessChunk(ReadSerialiser &ser, VulkanChunk chunk);
-  ReplayStatus ContextReplayLog(CaptureState readType, uint32_t startEventID, uint32_t endEventID,
-                                bool partial);
+  RDResult ContextReplayLog(CaptureState readType, uint32_t startEventID, uint32_t endEventID,
+                            bool partial);
   bool ContextProcessChunk(ReadSerialiser &ser, VulkanChunk chunk);
   void AddAction(const ActionDescription &a);
   void AddEvent();
@@ -1031,7 +1059,7 @@ public:
 
   void AddDebugMessage(MessageCategory c, MessageSeverity sv, MessageSource src, rdcstr d);
 
-  ReplayStatus Initialise(VkInitParams &params, uint64_t sectionVersion, const ReplayOptions &opts);
+  RDResult Initialise(VkInitParams &params, uint64_t sectionVersion, const ReplayOptions &opts);
   uint64_t GetLogVersion() { return m_SectionVersion; }
   void SetStructuredExport(uint64_t sectionVersion)
   {
@@ -1041,7 +1069,7 @@ public:
   void Shutdown();
   void ReplayLog(uint32_t startEventID, uint32_t endEventID, ReplayLogType replayType);
   void ReplayDraw(VkCommandBuffer cmd, const ActionDescription &action);
-  ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
+  RDResult ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
 
   SDFile *GetStructuredFile() { return m_StructuredFile; }
   SDFile *DetachStructuredFile()
@@ -1118,8 +1146,8 @@ public:
     else
       m_OOMHandler--;
   }
-  ReplayStatus FatalErrorCheck() { return m_FatalError; }
-  bool HasFatalError() { return m_FatalError != ReplayStatus::Succeeded; }
+  RDResult FatalErrorCheck() { return m_FatalError; }
+  bool HasFatalError() { return m_FatalError != ResultCode::Succeeded; }
   inline void CheckVkResult(VkResult vkr)
   {
     if(vkr == VK_SUCCESS)
@@ -1132,6 +1160,7 @@ public:
   bool NULLDescriptorsAllowed() const { return m_NULLDescriptorsAllowed; }
   bool ExtendedDynamicState() const { return m_ExtendedDynState; }
   bool ExtendedDynamicState2() const { return m_ExtendedDynState2; }
+  bool FragmentShadingRate() const { return m_FragmentShadingRate; }
   bool DynamicColorWrite() const { return m_DynColorWrite; }
   bool DynamicVertexInput() const { return m_DynVertexInput; }
   VulkanRenderState &GetRenderState() { return m_RenderState; }
@@ -1768,6 +1797,9 @@ public:
   IMPLEMENT_FUNCTION_SERIALISED(VkResult, vkAcquireNextImageKHR, VkDevice device,
                                 VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore,
                                 VkFence fence, uint32_t *pImageIndex);
+
+  void HandlePresent(VkQueue queue, const VkPresentInfoKHR *pPresentInfo,
+                     rdcarray<VkSemaphore> &unwrappedWaitSems);
 
   IMPLEMENT_FUNCTION_SERIALISED(VkResult, vkQueuePresentKHR, VkQueue queue,
                                 const VkPresentInfoKHR *pPresentInfo);
@@ -2517,4 +2549,13 @@ public:
                                 const VkRenderingInfo *pRenderingInfo);
 
   IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdEndRendering, VkCommandBuffer commandBuffer);
+
+  // VK_KHR_fragment_shading_rate
+
+  IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdSetFragmentShadingRateKHR, VkCommandBuffer commandBuffer,
+                                const VkExtent2D *pFragmentSize,
+                                const VkFragmentShadingRateCombinerOpKHR combinerOps[2]);
+  VkResult vkGetPhysicalDeviceFragmentShadingRatesKHR(
+      VkPhysicalDevice physicalDevice, uint32_t *pFragmentShadingRateCount,
+      VkPhysicalDeviceFragmentShadingRateKHR *pFragmentShadingRates);
 };

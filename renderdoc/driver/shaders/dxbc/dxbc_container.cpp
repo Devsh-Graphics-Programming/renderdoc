@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -31,14 +31,14 @@
 #include "driver/shaders/dxil/dxil_bytecode.h"
 #include "lz4/lz4.h"
 #include "md5/md5.h"
+#include "replay/replay_driver.h"
 #include "serialise/serialiser.h"
-#include "strings/string_utils.h"
 #include "dxbc_bytecode.h"
 
 #include "driver/dx/official/d3dcompiler.h"
 
-RDOC_CONFIG(rdcarray<rdcstr>, DXBC_Debug_SearchDirPaths, {},
-            "Paths to search for separated shader debug PDBs.");
+// this is extern so that it can be shared with vulkan
+RDOC_EXTERN_CONFIG(rdcarray<rdcstr>, DXBC_Debug_SearchDirPaths);
 
 namespace DXBC
 {
@@ -290,7 +290,7 @@ ShaderBuiltin GetSystemValue(SVSemantic systemValue)
   return ShaderBuiltin::Undefined;
 }
 
-rdcstr TypeName(CBufferVariableType::Descriptor desc)
+rdcstr TypeName(CBufferVariableType desc)
 {
   rdcstr ret;
 
@@ -320,11 +320,6 @@ rdcstr TypeName(CBufferVariableType::Descriptor desc)
     if(desc.rows > 1)
     {
       ret = StringFormat::Fmt("%s%dx%d", type, desc.rows, desc.cols);
-
-      if(desc.varClass == CLASS_MATRIX_ROWS)
-      {
-        ret = "row_major " + ret;
-      }
     }
     else if(desc.cols > 1)
     {
@@ -349,52 +344,52 @@ CBufferVariableType DXBCContainer::ParseRDEFType(const RDEFHeader *h, const byte
 
   CBufferVariableType ret;
 
-  ret.descriptor.varClass = (VariableClass)type->varClass;
-  ret.descriptor.cols = RDCMAX(1U, (uint32_t)type->cols);
-  ret.descriptor.elements = RDCMAX(1U, (uint32_t)type->numElems);
-  ret.descriptor.rows = RDCMAX(1U, (uint32_t)type->rows);
+  ret.varClass = (VariableClass)type->varClass;
+  ret.cols = RDCMAX(1U, (uint32_t)type->cols);
+  ret.elements = RDCMAX(1U, (uint32_t)type->numElems);
+  ret.rows = RDCMAX(1U, (uint32_t)type->rows);
 
   switch((VariableType)type->varType)
   {
     // DXBC treats all cbuffer variables as 32-bit regardless of declaration
     case DXBC::VARTYPE_MIN12INT:
     case DXBC::VARTYPE_MIN16INT:
-    case DXBC::VARTYPE_INT: ret.descriptor.varType = VarType::SInt; break;
-    case DXBC::VARTYPE_BOOL: ret.descriptor.varType = VarType::Bool; break;
+    case DXBC::VARTYPE_INT: ret.varType = VarType::SInt; break;
+    case DXBC::VARTYPE_BOOL: ret.varType = VarType::Bool; break;
     case DXBC::VARTYPE_MIN16UINT:
-    case DXBC::VARTYPE_UINT: ret.descriptor.varType = VarType::UInt; break;
-    case DXBC::VARTYPE_DOUBLE: ret.descriptor.varType = VarType::Double; break;
+    case DXBC::VARTYPE_UINT: ret.varType = VarType::UInt; break;
+    case DXBC::VARTYPE_DOUBLE: ret.varType = VarType::Double; break;
     case DXBC::VARTYPE_FLOAT:
     case DXBC::VARTYPE_MIN8FLOAT:
     case DXBC::VARTYPE_MIN10FLOAT:
     case DXBC::VARTYPE_MIN16FLOAT:
-    default: ret.descriptor.varType = VarType::Float; break;
+    default: ret.varType = VarType::Float; break;
   }
 
-  ret.descriptor.name = TypeName(ret.descriptor);
+  ret.name = TypeName(ret);
 
-  if(ret.descriptor.name == "interface")
+  if(ret.name == "interface")
   {
     if(h->targetVersion >= 0x500 && type->nameOffset > 0)
     {
-      ret.descriptor.name += " " + rdcstr((const char *)chunkContents + type->nameOffset);
+      ret.name += " " + rdcstr((const char *)chunkContents + type->nameOffset);
     }
     else
     {
-      ret.descriptor.name += StringFormat::Fmt(" unnamed_iface_0x%08x", typeOffset);
+      ret.name += StringFormat::Fmt(" unnamed_iface_0x%08x", typeOffset);
     }
   }
 
   // rename unnamed structs to have valid identifiers as type name
-  if(ret.descriptor.name.contains("<unnamed>"))
+  if(ret.name.contains("<unnamed>"))
   {
     if(h->targetVersion >= 0x500 && type->nameOffset > 0)
     {
-      ret.descriptor.name = (const char *)chunkContents + type->nameOffset;
+      ret.name = (const char *)chunkContents + type->nameOffset;
     }
     else
     {
-      ret.descriptor.name = StringFormat::Fmt("unnamed_struct_0x%08x", typeOffset);
+      ret.name = StringFormat::Fmt("unnamed_struct_0x%08x", typeOffset);
     }
   }
 
@@ -405,7 +400,7 @@ CBufferVariableType DXBCContainer::ParseRDEFType(const RDEFHeader *h, const byte
 
     ret.members.reserve(type->numMembers);
 
-    ret.descriptor.bytesize = 0;
+    ret.bytesize = 0;
 
     for(int32_t j = 0; j < type->numMembers; j++)
     {
@@ -415,36 +410,32 @@ CBufferVariableType DXBCContainer::ParseRDEFType(const RDEFHeader *h, const byte
       v.type = ParseRDEFType(h, chunkContents, members[j].typeOffset);
       v.offset = members[j].memberOffset;
 
-      ret.descriptor.bytesize = v.offset + v.type.descriptor.bytesize;
+      ret.bytesize = v.offset + v.type.bytesize;
 
       ret.members.push_back(v);
     }
 
-    ret.descriptor.bytesize *= RDCMAX(1U, ret.descriptor.elements);
+    ret.bytesize *= RDCMAX(1U, ret.elements);
   }
   else
   {
     // matrices take up a full vector for each column or row depending which is major, regardless of
     // the other dimension
-    if(ret.descriptor.varClass == CLASS_MATRIX_COLUMNS)
+    if(ret.varClass == CLASS_MATRIX_COLUMNS)
     {
-      ret.descriptor.bytesize = VarTypeByteSize(ret.descriptor.varType) * ret.descriptor.cols * 4 *
-                                RDCMAX(1U, ret.descriptor.elements);
+      ret.bytesize = VarTypeByteSize(ret.varType) * ret.cols * 4 * RDCMAX(1U, ret.elements);
     }
-    else if(ret.descriptor.varClass == CLASS_MATRIX_ROWS)
+    else if(ret.varClass == CLASS_MATRIX_ROWS)
     {
-      ret.descriptor.bytesize = VarTypeByteSize(ret.descriptor.varType) * ret.descriptor.rows * 4 *
-                                RDCMAX(1U, ret.descriptor.elements);
+      ret.bytesize = VarTypeByteSize(ret.varType) * ret.rows * 4 * RDCMAX(1U, ret.elements);
     }
     else
     {
       // arrays also take up a full vector for each element
-      if(ret.descriptor.elements > 1)
-        ret.descriptor.bytesize =
-            VarTypeByteSize(ret.descriptor.varType) * 4 * RDCMAX(1U, ret.descriptor.elements);
+      if(ret.elements > 1)
+        ret.bytesize = VarTypeByteSize(ret.varType) * 4 * RDCMAX(1U, ret.elements);
       else
-        ret.descriptor.bytesize =
-            VarTypeByteSize(ret.descriptor.varType) * ret.descriptor.rows * ret.descriptor.cols;
+        ret.bytesize = VarTypeByteSize(ret.varType) * ret.rows * ret.cols;
     }
   }
 
@@ -1911,224 +1902,7 @@ DXBCContainer::DXBCContainer(const bytebuf &ByteCode, const rdcstr &debugInfoPat
     if(m_DXBCByteCode)
       m_DXBCByteCode->SetDebugInfo(m_DebugInfo);
 
-    struct SplitFile
-    {
-      rdcstr filename;
-      rdcarray<rdcstr> lines;
-      bool modified = false;
-    };
-
-    rdcarray<SplitFile> splitFiles;
-
-    splitFiles.resize(m_DebugInfo->Files.size());
-
-    for(size_t i = 0; i < m_DebugInfo->Files.size(); i++)
-      splitFiles[i].filename = m_DebugInfo->Files[i].first;
-
-    for(size_t i = 0; i < m_DebugInfo->Files.size(); i++)
-    {
-      rdcarray<rdcstr> srclines;
-
-      // start off writing to the corresponding output file.
-      SplitFile *dstFile = &splitFiles[i];
-      bool changedFile = false;
-
-      size_t dstLine = 0;
-
-      // skip this file if it doesn't contain #line
-      if(!m_DebugInfo->Files[i].second.contains("#line"))
-        continue;
-
-      split(m_DebugInfo->Files[i].second, srclines, '\n');
-      srclines.push_back("");
-
-      // handle #line directives by inserting empty lines or erasing as necessary
-      bool seenLine = false;
-
-      for(size_t srcLine = 0; srcLine < srclines.size(); srcLine++)
-      {
-        if(srclines[srcLine].empty())
-        {
-          dstLine++;
-          continue;
-        }
-
-        char *c = &srclines[srcLine][0];
-        char *end = c + srclines[srcLine].size();
-
-        while(*c == '\t' || *c == ' ' || *c == '\r')
-          c++;
-
-        if(c == end)
-        {
-          // blank line, just advance line counter
-          dstLine++;
-          continue;
-        }
-
-        if(c + 5 > end || strncmp(c, "#line", 5) != 0)
-        {
-          // only actually insert the line if we've seen a #line statement. Otherwise we're just
-          // doing an identity copy. This can lead to problems e.g. if there are a few statements in
-          // a file before the #line we then create a truncated list of lines with only those and
-          // then start spitting the #line directives into other files. We still want to have the
-          // original file as-is.
-          if(seenLine)
-          {
-            // resize up to account for the current line, if necessary
-            dstFile->lines.resize(RDCMAX(dstLine + 1, dstFile->lines.size()));
-
-            // if non-empty, append this line (to allow multiple lines on the same line
-            // number to be concatenated). To avoid screwing up line numbers we have to append with
-            // a comment and not a newline.
-            if(dstFile->lines[dstLine].empty())
-              dstFile->lines[dstLine] = srclines[srcLine];
-            else
-              dstFile->lines[dstLine] += " /* multiple #lines overlapping */ " + srclines[srcLine];
-
-            dstFile->modified = true;
-          }
-
-          // advance line counter
-          dstLine++;
-
-          continue;
-        }
-
-        seenLine = true;
-
-        // we have a #line directive
-        c += 5;
-
-        if(c >= end)
-        {
-          // invalid #line, just advance line counter
-          dstLine++;
-          continue;
-        }
-
-        while(*c == '\t' || *c == ' ')
-          c++;
-
-        if(c >= end)
-        {
-          // invalid #line, just advance line counter
-          dstLine++;
-          continue;
-        }
-
-        // invalid #line, no line number. Skip/ignore and just advance line counter
-        if(*c < '0' || *c > '9')
-        {
-          dstLine++;
-          continue;
-        }
-
-        size_t newLineNum = 0;
-        while(*c >= '0' && *c <= '9')
-        {
-          newLineNum *= 10;
-          newLineNum += int((*c) - '0');
-          c++;
-        }
-
-        // convert to 0-indexed line number
-        if(newLineNum > 0)
-          newLineNum--;
-
-        while(*c == '\t' || *c == ' ')
-          c++;
-
-        if(*c == '"')
-        {
-          // filename
-          c++;
-
-          char *filename = c;
-
-          // parse out filename
-          while(*c != '"' && *c != 0)
-          {
-            if(*c == '\\')
-            {
-              // skip escaped characters
-              c += 2;
-            }
-            else
-            {
-              c++;
-            }
-          }
-
-          // parsed filename successfully
-          if(*c == '"')
-          {
-            *c = 0;
-
-            rdcstr fname = filename;
-            if(fname.empty())
-              fname = "shader";
-
-            // find the new destination file
-            bool found = false;
-            size_t dstFileIdx = 0;
-
-            for(size_t f = 0; f < splitFiles.size(); f++)
-            {
-              if(splitFiles[f].filename == fname)
-              {
-                found = true;
-                dstFileIdx = f;
-                break;
-              }
-            }
-
-            if(found)
-            {
-              changedFile = (dstFile != &splitFiles[dstFileIdx]);
-              dstFile = &splitFiles[dstFileIdx];
-            }
-            else
-            {
-              RDCWARN("Couldn't find filename '%s' in #line directive in debug info", fname.c_str());
-
-              // make a dummy file to write into that won't be used.
-              splitFiles.push_back(SplitFile());
-              splitFiles.back().filename = fname;
-              splitFiles.back().modified = true;
-
-              changedFile = true;
-              dstFile = &splitFiles.back();
-            }
-
-            // set the next line number, and continue processing
-            dstLine = newLineNum;
-
-            continue;
-          }
-          else
-          {
-            // invalid #line, ignore
-            RDCERR("Couldn't parse #line directive: '%s'", srclines[srcLine].c_str());
-            continue;
-          }
-        }
-        else
-        {
-          // No filename. Set the next line number, and continue processing
-          dstLine = newLineNum;
-          continue;
-        }
-      }
-    }
-
-    for(size_t i = 0; i < m_DebugInfo->Files.size(); i++)
-    {
-      if(m_DebugInfo->Files[i].second.empty() || splitFiles[i].modified)
-      {
-        merge(splitFiles[i].lines, m_DebugInfo->Files[i].second, '\n');
-      }
-    }
+    PreprocessLineDirectives(m_DebugInfo->Files);
   }
 
   // if we had bytecode in this container, ensure we had reflection. If it's a blob with only an

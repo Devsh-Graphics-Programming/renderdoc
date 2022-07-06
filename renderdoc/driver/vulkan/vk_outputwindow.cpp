@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -85,6 +85,9 @@ VulkanReplay::OutputWindow::OutputWindow()
 
 void VulkanReplay::OutputWindow::Destroy(WrappedVulkan *driver, VkDevice device)
 {
+  driver->SubmitCmds();
+  driver->FlushQ();
+
   const VkDevDispatchTable *vt = ObjDisp(device);
 
   vt->DeviceWaitIdle(Unwrap(device));
@@ -205,7 +208,7 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
 
   if(m_WindowSystem != WindowingSystem::Headless)
   {
-    VkSurfaceCapabilitiesKHR capabilities;
+    VkSurfaceCapabilitiesKHR capabilities = {};
 
     ObjDisp(inst)->GetPhysicalDeviceSurfaceCapabilitiesKHR(Unwrap(phys), Unwrap(surface),
                                                            &capabilities);
@@ -213,10 +216,41 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
     if(capabilities.minImageCount < 8)
       numImages = RDCMAX(numImages, capabilities.minImageCount);
 
+    if(capabilities.supportedUsageFlags == 0)
+    {
+      if(old != VK_NULL_HANDLE)
+      {
+        vt->DestroySwapchainKHR(Unwrap(device), Unwrap(old), NULL);
+        GetResourceManager()->ReleaseWrappedResource(old);
+      }
+
+      RDCERR("Surface reported unsuccessful. %d consecutive failures!", failures);
+      failures++;
+
+      return;
+    }
+
     RDCASSERT(capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     // AMD didn't report this capability for a while. If the assert fires for you, update
     // your drivers!
     RDCASSERT(capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+
+    VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    // find a supported alpha compositing mode
+    if((capabilities.supportedCompositeAlpha & compositeAlpha) == 0)
+    {
+      VkCompositeAlphaFlagBitsKHR compositingBits[] = {
+          VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+          VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR};
+      for(VkCompositeAlphaFlagBitsKHR &compositingBit : compositingBits)
+      {
+        if(capabilities.supportedCompositeAlpha & compositingBit)
+        {
+          compositeAlpha = compositingBit;
+          break;
+        }
+      }
+    }
 
     // check format and present mode from driver
     {
@@ -323,7 +357,7 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
         0,
         NULL,
         VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-        VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        compositeAlpha,
         presentmode,
         true,
         Unwrap(old),
@@ -414,6 +448,8 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
 
     GetResourceManager()->WrapResource(Unwrap(device), dsimg);
 
+    NameVulkanObject(dsimg, "outputwindow dsimg");
+
     VkMemoryRequirements mrq = {0};
 
     vt->GetImageMemoryRequirements(Unwrap(device), Unwrap(dsimg), &mrq);
@@ -451,6 +487,7 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
 
     vkr = vt->CreateImageView(Unwrap(device), &info, NULL, &dsview);
     driver->CheckVkResult(vkr);
+    NameUnwrappedVulkanObject(dsview, "output window dsview");
 
     GetResourceManager()->WrapResource(Unwrap(device), dsview);
 
@@ -464,6 +501,8 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
     driver->CheckVkResult(vkr);
 
     GetResourceManager()->WrapResource(Unwrap(device), resolveimg);
+
+    NameVulkanObject(resolveimg, "outputwindow resolveimg");
 
     vt->GetImageMemoryRequirements(Unwrap(device), Unwrap(resolveimg), &mrq);
 
@@ -561,6 +600,8 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
 
     GetResourceManager()->WrapResource(Unwrap(device), bb);
 
+    NameVulkanObject(bb, "outputwindow bb");
+
     VkMemoryRequirements mrq = {0};
 
     vt->GetImageMemoryRequirements(Unwrap(device), Unwrap(bb), &mrq);
@@ -600,6 +641,7 @@ void VulkanReplay::OutputWindow::Create(WrappedVulkan *driver, VkDevice device, 
 
     vkr = vt->CreateImageView(Unwrap(device), &info, NULL, &bbview);
     driver->CheckVkResult(vkr);
+    NameUnwrappedVulkanObject(bbview, "output window bbview");
 
     GetResourceManager()->WrapResource(Unwrap(device), bbview);
 
@@ -682,7 +724,7 @@ void VulkanReplay::GetOutputWindowData(uint64_t id, bytebuf &retData)
   vt->GetBufferMemoryRequirements(Unwrap(device), readbackBuf, &mrq);
 
   VkMemoryAllocateInfo allocInfo = {
-      VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, bufInfo.size,
+      VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, mrq.size,
       m_pDriver->GetReadbackMemoryIndex(mrq.memoryTypeBits),
   };
 
@@ -897,12 +939,8 @@ void VulkanReplay::BindOutputWindow(uint64_t id, bool depth)
   m_DebugHeight = (int32_t)outw.height;
 
   VkDevice dev = m_pDriver->GetDev();
-  VkCommandBuffer cmd = m_pDriver->GetNextCmd();
   const VkDevDispatchTable *vt = ObjDisp(dev);
   VkResult vkr = VK_SUCCESS;
-
-  if(cmd == VK_NULL_HANDLE)
-    return;
 
   // if we have a swapchain, acquire the next image.
   if(outw.swap != VK_NULL_HANDLE)
@@ -956,6 +994,10 @@ void VulkanReplay::BindOutputWindow(uint64_t id, bool depth)
 
     vt->DestroySemaphore(Unwrap(dev), sem, NULL);
   }
+
+  VkCommandBuffer cmd = m_pDriver->GetNextCmd();
+  if(cmd == VK_NULL_HANDLE)
+    return;
 
   VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
                                         VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};

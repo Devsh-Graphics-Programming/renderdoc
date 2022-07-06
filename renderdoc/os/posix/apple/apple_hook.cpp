@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -39,6 +39,7 @@ static std::map<rdcstr, rdcarray<FunctionLoadCallback>> libraryCallbacks;
 static std::set<rdcstr> libraryHooks;
 static rdcarray<FunctionHook> functionHooks;
 static std::set<void *> libraryHandles;
+static std::map<rdcstr, void *> realSymbols;
 
 void *interposed_dlopen(const char *filename, int flag)
 {
@@ -130,7 +131,16 @@ void LibraryHooks::EndHookRegistration()
   {
     if(hook.orig && *hook.orig == NULL)
     {
-      *hook.orig = dlsym(RTLD_NEXT, hook.function.c_str());
+      // Try to get direct compile time function pointer before using dlsym
+      auto it = realSymbols.find(hook.function);
+      if(it != realSymbols.end())
+      {
+        *hook.orig = it->second;
+      }
+      if(*hook.orig == NULL)
+      {
+        *hook.orig = dlsym(RTLD_NEXT, hook.function.c_str());
+      }
       RDCASSERT(*hook.orig != hook.hook, hook.function);
     }
   }
@@ -172,4 +182,9 @@ ScopedSuppressHooking::ScopedSuppressHooking()
 
 ScopedSuppressHooking::~ScopedSuppressHooking()
 {
+}
+
+void AppleRegisterRealSymbol(const char *functionName, void *address)
+{
+  realSymbols[functionName] = address;
 }

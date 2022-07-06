@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -82,7 +82,7 @@ void D3D11Replay::Shutdown()
   delete m_pDevice;
 }
 
-ReplayStatus D3D11Replay::FatalErrorCheck()
+RDResult D3D11Replay::FatalErrorCheck()
 {
   return m_pDevice->FatalErrorCheck();
 }
@@ -846,6 +846,22 @@ void D3D11Replay::SavePipelineState(uint32_t eventId)
           samp.minLOD = desc.MinLOD;
           samp.mipLODBias = desc.MipLODBias;
         }
+        else
+        {
+          samp.addressU = samp.addressV = samp.addressW = AddressMode::ClampEdge;
+
+          samp.borderColor = {1.0f, 1.0f, 1.0f, 1.0f};
+
+          samp.compareFunction = CompareFunction::Never;
+          samp.filter.filter = FilterFunction::Normal;
+          samp.filter.magnify = FilterMode::Linear;
+          samp.filter.minify = FilterMode::Linear;
+          samp.filter.mip = FilterMode::Linear;
+          samp.maxAnisotropy = 1;
+          samp.maxLOD = FLT_MAX;
+          samp.minLOD = -FLT_MAX;
+          samp.mipLODBias = 0.0f;
+        }
       }
 
       dst.srvs.resize(D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT);
@@ -1587,7 +1603,7 @@ void D3D11Replay::SavePipelineState(uint32_t eventId)
   ret.predication.isPassing = rs->PredicationWouldPass();
 }
 
-ReplayStatus D3D11Replay::ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
+RDResult D3D11Replay::ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
 {
   return m_pDevice->ReadLogInitialisation(rdc, storeStructuredBuffers);
 }
@@ -2544,6 +2560,13 @@ void D3D11Replay::GetTextureData(ResourceId tex, const Subresource &sub,
   }
 
   SAFE_RELEASE(dummyTex);
+}
+
+rdcarray<ShaderSourcePrefix> D3D11Replay::GetCustomShaderSourcePrefixes()
+{
+  return {
+      {ShaderEncoding::HLSL, HLSL_CUSTOM_PREFIX},
+  };
 }
 
 void D3D11Replay::ReplaceResource(ResourceId from, ResourceId to)
@@ -3896,7 +3919,7 @@ void D3D11Replay::SetProxyBufferData(ResourceId bufid, byte *data, size_t dataSi
 
 ID3DDevice *GetD3D11DeviceIfAlloc(IUnknown *dev);
 
-ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, IReplayDriver **driver)
+RDResult D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, IReplayDriver **driver)
 {
   RDCDEBUG("Creating a D3D11 replay device");
 
@@ -3906,8 +3929,7 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
   lib = LoadLibraryA("d3d11.dll");
   if(lib == NULL)
   {
-    RDCERR("Failed to load d3d11.dll");
-    return ReplayStatus::APIInitFailed;
+    RETURN_ERROR_RESULT(ResultCode::APIInitFailed, "Failed to load d3d11.dll");
   }
 
   PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN CreateDeviceAndSwapChainPtr =
@@ -3915,24 +3937,15 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
 
   RealD3D11CreateFunction CreateDeviceAndSwapChain = CreateDeviceAndSwapChainPtr;
 
-  lib = LoadLibraryA("d3d9.dll");
-  if(lib == NULL)
-  {
-    RDCERR("Failed to load d3d9.dll");
-    return ReplayStatus::APIInitFailed;
-  }
-
   lib = LoadLibraryA("dxgi.dll");
   if(lib == NULL)
   {
-    RDCERR("Failed to load dxgi.dll");
-    return ReplayStatus::APIInitFailed;
+    RETURN_ERROR_RESULT(ResultCode::APIInitFailed, "Failed to load dxgi.dll");
   }
 
   if(GetD3DCompiler() == NULL)
   {
-    RDCERR("Failed to load d3dcompiler_??.dll");
-    return ReplayStatus::APIInitFailed;
+    RETURN_ERROR_RESULT(ResultCode::APIInitFailed, "Failed to load d3dcompiler_??.dll");
   }
 
   D3D11InitParams initParams;
@@ -3948,14 +3961,16 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
     int sectionIdx = rdc->SectionIndex(SectionType::FrameCapture);
 
     if(sectionIdx < 0)
-      return ReplayStatus::InternalError;
+      RETURN_ERROR_RESULT(ResultCode::FileCorrupted, "File does not contain captured API data");
 
     ver = rdc->GetSectionProperties(sectionIdx).version;
 
     if(!D3D11InitParams::IsSupportedVersion(ver))
     {
-      RDCERR("Incompatible D3D11 serialise version %llu", ver);
-      return ReplayStatus::APIIncompatibleVersion;
+      RETURN_ERROR_RESULT(ResultCode::APIIncompatibleVersion,
+                          "D3D11 capture is incompatible version %llu, newest supported by this "
+                          "build of RenderDoc is %llu",
+                          ver, D3D11InitParams::CurrentVersion);
     }
 
     StreamReader *reader = rdc->ReadSection(sectionIdx);
@@ -3968,16 +3983,15 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
 
     if(chunk != SystemChunk::DriverInit)
     {
-      RDCERR("Expected to get a DriverInit chunk, instead got %u", chunk);
-      return ReplayStatus::FileCorrupted;
+      RETURN_ERROR_RESULT(ResultCode::FileCorrupted,
+                          "Expected to get a DriverInit chunk, instead got %u", chunk);
     }
 
     SERIALISE_ELEMENT(initParams);
 
     if(ser.IsErrored())
     {
-      RDCERR("Failed reading driver init params.");
-      return ReplayStatus::FileIOFailed;
+      return ser.GetError();
     }
 
     if(initParams.AdapterDesc.Description[0])
@@ -4031,14 +4045,14 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
       if(FAILED(hr) || !factory)
       {
         SAFE_RELEASE(factory);
-        RDCERR("Couldn't create IDXGIFactory: %s", ToStr(hr).c_str());
-        return ReplayStatus::APIInitFailed;
+        RETURN_ERROR_RESULT(ResultCode::APIInitFailed,
+                            "Couldn't create DXGI factory from CreateDXGIFactory: %s",
+                            ToStr(hr).c_str());
       }
     }
     else
     {
-      RDCERR("Couldn't get CreateDXGIFactory");
-      return ReplayStatus::APIInitFailed;
+      RETURN_ERROR_RESULT(ResultCode::APIInitFailed, "Couldn't find CreateDXGIFactory in dxgi.dll");
     }
   }
 
@@ -4060,8 +4074,9 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
 
     if(!nvapiDev)
     {
-      RDCERR("Capture requires nvapi to replay, but it's not available or can't be initialised");
-      return ReplayStatus::APIHardwareUnsupported;
+      RETURN_ERROR_RESULT(
+          ResultCode::APIHardwareUnsupported,
+          "Capture requires nvapi to replay, but it's not available or can't be initialised");
     }
   }
   else if(initParams.VendorExtensions == GPUVendor::AMD)
@@ -4070,8 +4085,9 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
 
     if(!agsDev)
     {
-      RDCERR("Capture requires ags to replay, but it's not available or can't be initialised");
-      return ReplayStatus::APIHardwareUnsupported;
+      RETURN_ERROR_RESULT(
+          ResultCode::APIHardwareUnsupported,
+          "Capture requires ags to replay, but it's not available or can't be initialised");
     }
 
     CreateDeviceAndSwapChain = [agsDev](
@@ -4087,11 +4103,11 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
   }
   else if(initParams.VendorExtensions != GPUVendor::Unknown)
   {
-    RDCERR(
+    RETURN_ERROR_RESULT(
+        ResultCode::APIInitFailed,
         "Capture requires vendor extensions by %s to replay, but no support for that is "
         "available.",
         ToStr(initParams.VendorExtensions).c_str());
-    return ReplayStatus::APIInitFailed;
   }
 
   IDXGIAdapter *adapter = NULL;
@@ -4275,13 +4291,13 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
       BOOL ok = nvapiDev->SetReal(device);
       if(!ok)
       {
-        RDCERR(
-            "This capture needs nvapi extensions to replay, but device selected for replay can't "
-            "support nvapi extensions");
         SAFE_RELEASE(device);
         SAFE_RELEASE(nvapiDev);
         SAFE_RELEASE(factory);
-        return ReplayStatus::APIHardwareUnsupported;
+        RETURN_ERROR_RESULT(
+            ResultCode::APIHardwareUnsupported,
+            "This capture needs nvapi extensions to replay, but device selected for replay can't "
+            "support nvapi extensions");
       }
     }
 
@@ -4289,13 +4305,13 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
     {
       if(!agsDev->ExtensionsSupported())
       {
-        RDCERR(
-            "This capture needs AGS extesnions to replay, but device selected for replay can't "
-            "support AGS extensions");
         SAFE_RELEASE(device);
         SAFE_RELEASE(nvapiDev);
         SAFE_RELEASE(factory);
-        return ReplayStatus::APIHardwareUnsupported;
+        RETURN_ERROR_RESULT(
+            ResultCode::APIHardwareUnsupported,
+            "This capture needs AGS extensions to replay, but device selected for replay can't "
+            "support nvapi extensions");
       }
     }
 
@@ -4318,37 +4334,39 @@ ReplayStatus D3D11_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, I
     }
 
     *driver = (IReplayDriver *)replay;
-    return ReplayStatus::Succeeded;
+    return ResultCode::Succeeded;
   }
 
   SAFE_RELEASE(factory);
 
-  RDCERR("Couldn't create any compatible d3d11 device.");
+  rdcstr error = "Couldn't create any compatible d3d11 device.";
 
-  if((flags & D3D11_CREATE_DEVICE_DEBUG) && !isProxy)
-    RDCLOG(
-        "Development RenderDoc builds require D3D debug layers available, "
-        "ensure you have the windows SDK or windows feature needed.");
+  if(flags & D3D11_CREATE_DEVICE_DEBUG)
+    error +=
+        "\n\nDevelopment RenderDoc builds require D3D debug layers available, "
+        "ensure you have the windows SDK or windows feature needed.";
 
-  return ReplayStatus::APIHardwareUnsupported;
+  RETURN_ERROR_RESULT(ResultCode::APIHardwareUnsupported, "%s", error.c_str());
 }
 
 static DriverRegistration D3D11DriverRegistration(RDCDriver::D3D11, &D3D11_CreateReplayDevice);
 
-void D3D11_ProcessStructured(RDCFile *rdc, SDFile &output)
+RDResult D3D11_ProcessStructured(RDCFile *rdc, SDFile &output)
 {
   WrappedID3D11Device device(NULL, D3D11InitParams());
 
   int sectionIdx = rdc->SectionIndex(SectionType::FrameCapture);
 
   if(sectionIdx < 0)
-    return;
+    RETURN_ERROR_RESULT(ResultCode::FileCorrupted, "File does not contain captured API data");
 
   device.SetStructuredExport(rdc->GetSectionProperties(sectionIdx).version);
-  ReplayStatus status = device.ReadLogInitialisation(rdc, true);
+  RDResult result = device.ReadLogInitialisation(rdc, true);
 
-  if(status == ReplayStatus::Succeeded)
+  if(result == ResultCode::Succeeded)
     device.GetStructuredFile()->Swap(output);
+
+  return result;
 }
 
 static StructuredProcessRegistration D3D11ProcessRegistration(RDCDriver::D3D11,

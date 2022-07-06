@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -996,6 +996,12 @@ protected:
     m_pDriver->CheckVkResult(vkr);
     m_FbsToDestroy.push_back(framebuffer);
 
+    NameVulkanObject(
+        framebuffer,
+        StringFormat::Fmt("Pixel history patched framebuffer %s fmt %s",
+                          newColorAtt == VK_NULL_HANDLE ? "no new attachment" : "new attachment",
+                          ToStr(newColorFormat).c_str()));
+
     pipestate.SetFramebuffer(m_pDriver, GetResID(framebuffer));
 
     return framebuffer;
@@ -1309,6 +1315,7 @@ struct VulkanOcclusionCallback : public VulkanPixelHistoryCallback
   void PreEndCommandBuffer(VkCommandBuffer cmd) {}
   void AliasEvent(uint32_t primary, uint32_t alias) {}
   bool SplitSecondary() { return false; }
+  bool ForceLoadRPs() { return false; }
   void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
                      VkCommandBuffer cmd)
   {
@@ -1695,6 +1702,7 @@ struct VulkanColorAndStencilCallback : public VulkanPixelHistoryCallback
   }
 
   bool SplitSecondary() { return true; }
+  bool ForceLoadRPs() { return true; }
   void PostRemisc(uint32_t eid, ActionFlags flags, VkCommandBuffer cmd) {}
   void PreEndCommandBuffer(VkCommandBuffer cmd) {}
   void AliasEvent(uint32_t primary, uint32_t alias)
@@ -1941,6 +1949,7 @@ struct TestsFailedCallback : public VulkanPixelHistoryCallback
   bool PostMisc(uint32_t eid, ActionFlags flags, VkCommandBuffer cmd) { return false; }
   void PostRemisc(uint32_t eid, ActionFlags flags, VkCommandBuffer cmd) {}
   bool SplitSecondary() { return false; }
+  bool ForceLoadRPs() { return false; }
   void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
                      VkCommandBuffer cmd)
   {
@@ -2961,6 +2970,7 @@ struct VulkanPixelHistoryPerFragmentCallback : VulkanPixelHistoryCallback
   void PreEndCommandBuffer(VkCommandBuffer cmd) {}
   void AliasEvent(uint32_t primary, uint32_t alias) {}
   bool SplitSecondary() { return false; }
+  bool ForceLoadRPs() { return false; }
   void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
                      VkCommandBuffer cmd)
   {
@@ -3104,6 +3114,7 @@ struct VulkanPixelHistoryDiscardedFragmentsCallback : VulkanPixelHistoryCallback
   void PreEndCommandBuffer(VkCommandBuffer cmd) {}
   void AliasEvent(uint32_t primary, uint32_t alias) {}
   bool SplitSecondary() { return false; }
+  bool ForceLoadRPs() { return false; }
   void PreCmdExecute(uint32_t baseEid, uint32_t secondaryFirst, uint32_t secondaryLast,
                      VkCommandBuffer cmd)
   {
@@ -3222,7 +3233,7 @@ bool VulkanDebugManager::PixelHistorySetupResources(PixelHistoryResources &resou
   viewInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT;
   viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, imgInfo.arrayLayers};
 
-  if(samples != VK_SAMPLE_COUNT_1_BIT)
+  if(imgInfo.arrayLayers != 0)
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 
   vkr = m_pDriver->vkCreateImageView(m_Device, &viewInfo, NULL, &colorImageView);

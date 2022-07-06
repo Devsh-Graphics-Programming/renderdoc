@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021 Baldur Karlsson
+ * Copyright (c) 2021-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -63,7 +63,7 @@ public:
 
   FrameRecord GetFrameRecord();
 
-  ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
+  RDResult ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
   void ReplayLog(uint32_t endEventID, ReplayLogType replayType);
   SDFile *GetStructuredFile();
 
@@ -124,7 +124,7 @@ public:
   // IReplayDriver
   bool IsRemoteProxy();
 
-  ReplayStatus FatalErrorCheck();
+  RDResult FatalErrorCheck();
   IReplayDriver *MakeDummyDriver();
 
   rdcarray<WindowingSystem> GetSupportedWindowSystems();
@@ -167,6 +167,7 @@ public:
                          const ShaderCompileFlags &compileFlags, ShaderStage type, ResourceId &id,
                          rdcstr &errors);
   rdcarray<ShaderEncoding> GetCustomShaderEncodings();
+  rdcarray<ShaderSourcePrefix> GetCustomShaderSourcePrefixes();
   ResourceId ApplyCustomShader(TextureDisplay &display);
   void FreeCustomShader(ResourceId id);
 
@@ -195,4 +196,5 @@ private:
   rdcarray<GPUDevice> m_GPUs;
   rdcarray<WindowingSystem> m_WindowSystems;
   rdcarray<ShaderEncoding> m_CustomEncodings;
+  rdcarray<ShaderSourcePrefix> m_CustomPrefixes;
 };

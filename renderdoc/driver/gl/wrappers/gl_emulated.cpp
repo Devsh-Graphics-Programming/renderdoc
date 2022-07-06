@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -4135,7 +4135,7 @@ void MakeOfflineShaderReflection(ShaderStage stage, const rdcstr &source, const 
 void MakeOnlineShaderReflection(ShaderStage stage, const rdcstr &source, const rdcstr &entryPoint,
                                 ShaderReflection &refl, ShaderBindpointMapping &mapping)
 {
-  ReplayStatus status = ReplayStatus::UnknownError;
+  RDResult status = ResultCode::APIUnsupported;
   IReplayDriver *driver = NULL;
 
   RDCASSERT(entryPoint == "main");
@@ -4145,7 +4145,7 @@ void MakeOnlineShaderReflection(ShaderStage stage, const rdcstr &source, const r
   if(replays.find(RDCDriver::OpenGL) != replays.end())
     status = RenderDoc::Inst().CreateProxyReplayDriver(RDCDriver::OpenGL, &driver);
 
-  if(status != ReplayStatus::Succeeded)
+  if(status != ResultCode::Succeeded)
   {
     RDCERR("No GL support locally, couldn't create proxy GL driver for reflection");
     return;
@@ -4156,7 +4156,7 @@ void MakeOnlineShaderReflection(ShaderStage stage, const rdcstr &source, const r
   bytebuf buf;
   buf.resize(source.size());
   memcpy(buf.data(), source.data(), source.size());
-  driver->BuildCustomShader(ShaderEncoding::GLSL, buf, "main", ShaderCompileFlags(), stage, id,
+  driver->BuildTargetShader(ShaderEncoding::GLSL, buf, "main", ShaderCompileFlags(), stage, id,
                             errors);
 
   if(id == ResourceId())
@@ -4166,6 +4166,11 @@ void MakeOnlineShaderReflection(ShaderStage stage, const rdcstr &source, const r
   }
 
   refl = *driver->GetShader(ResourceId(), id, ShaderEntryPoint("main", ShaderStage::Fragment));
+
+  // hack the mapping so that tests can skip checks of mapping when using online compilation (see
+  // MAPPING_VALID)
+  mapping.inputAttributes.resize(1);
+  mapping.inputAttributes[0] = 0x12345678;
 
   // Note that we can't fill out ShaderBindpointMapping easily on the actual driver through the
   // replay interface

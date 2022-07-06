@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,7 +41,8 @@ bool WrappedID3D12GraphicsCommandList::Serialise_WriteBufferImmediate(
   {
     if(GetWrapped(pCommandList)->GetReal2() == NULL)
     {
-      RDCERR("Can't replay ID3D12GraphicsCommandList2 command");
+      SET_ERROR_RESULT(m_Cmd->m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
+                       "Capture requires ID3D12GraphicsCommandList2 which isn't available");
       return false;
     }
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -175,12 +175,56 @@ DESTROY_IMPL(VkFence, DestroyFence)
 DESTROY_IMPL(VkEvent, DestroyEvent)
 DESTROY_IMPL(VkCommandPool, DestroyCommandPool)
 DESTROY_IMPL(VkQueryPool, DestroyQueryPool)
-DESTROY_IMPL(VkFramebuffer, DestroyFramebuffer)
-DESTROY_IMPL(VkRenderPass, DestroyRenderPass)
 DESTROY_IMPL(VkDescriptorUpdateTemplate, DestroyDescriptorUpdateTemplate)
 DESTROY_IMPL(VkSamplerYcbcrConversion, DestroySamplerYcbcrConversion)
 
 #undef DESTROY_IMPL
+
+void WrappedVulkan::vkDestroyFramebuffer(VkDevice device, VkFramebuffer obj,
+                                         const VkAllocationCallbacks *pAllocator)
+{
+  if(obj == VK_NULL_HANDLE)
+    return;
+  VkFramebuffer unwrappedObj = Unwrap(obj);
+  m_ForcedReferences.removeOne(GetRecord(obj));
+  if(IsReplayMode(m_State))
+  {
+    const VulkanCreationInfo::Framebuffer &rpinfo = m_CreationInfo.m_Framebuffer[GetResID(obj)];
+
+    for(VkFramebuffer loadfb : rpinfo.loadFBs)
+    {
+      ObjDisp(device)->DestroyFramebuffer(Unwrap(device), Unwrap(loadfb), pAllocator);
+      GetResourceManager()->ReleaseWrappedResource(loadfb, true);
+    }
+
+    m_CreationInfo.erase(GetResID(obj));
+  }
+  GetResourceManager()->ReleaseWrappedResource(obj, true);
+  ObjDisp(device)->DestroyFramebuffer(Unwrap(device), unwrappedObj, pAllocator);
+}
+
+void WrappedVulkan::vkDestroyRenderPass(VkDevice device, VkRenderPass obj,
+                                        const VkAllocationCallbacks *pAllocator)
+{
+  if(obj == VK_NULL_HANDLE)
+    return;
+  VkRenderPass unwrappedObj = Unwrap(obj);
+  m_ForcedReferences.removeOne(GetRecord(obj));
+  if(IsReplayMode(m_State))
+  {
+    const VulkanCreationInfo::RenderPass &rpinfo = m_CreationInfo.m_RenderPass[GetResID(obj)];
+
+    for(VkRenderPass loadrp : rpinfo.loadRPs)
+    {
+      ObjDisp(device)->DestroyRenderPass(Unwrap(device), Unwrap(loadrp), pAllocator);
+      GetResourceManager()->ReleaseWrappedResource(loadrp, true);
+    }
+
+    m_CreationInfo.erase(GetResID(obj));
+  }
+  GetResourceManager()->ReleaseWrappedResource(obj, true);
+  ObjDisp(device)->DestroyRenderPass(Unwrap(device), unwrappedObj, pAllocator);
+}
 
 void WrappedVulkan::vkDestroyBuffer(VkDevice device, VkBuffer buffer,
                                     const VkAllocationCallbacks *pAllocator)
@@ -203,6 +247,14 @@ void WrappedVulkan::vkDestroyBuffer(VkDevice device, VkBuffer buffer,
   }
 
   VkBuffer unwrappedObj = Unwrap(buffer);
+
+  if(IsCaptureMode(m_State))
+  {
+    VkResourceRecord *record = GetRecord(buffer);
+
+    if(record->resInfo && record->resInfo->dedicatedMemory != ResourceId())
+      GetResourceManager()->PreFreeMemory(record->resInfo->dedicatedMemory);
+  }
 
   m_ForcedReferences.removeOne(GetRecord(buffer));
 
@@ -538,7 +590,8 @@ bool WrappedVulkan::Serialise_vkCreateSampler(SerialiserType &ser, VkDevice devi
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating sampler, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -653,7 +706,7 @@ void WrappedVulkan::PatchAttachment(VkFramebufferAttachmentImageInfo *att, VkFor
 
     if(!IsDepthOrStencilFormat(imgFormat))
     {
-      if(GetDebugManager() && GetShaderCache()->IsArray2MSSupported())
+      if(GetDebugManager() && GetShaderCache()->IsBuffer2MSSupported())
         att->usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     else
@@ -704,7 +757,8 @@ bool WrappedVulkan::Serialise_vkCreateFramebuffer(SerialiserType &ser, VkDevice 
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating framebuffer, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -726,6 +780,8 @@ bool WrappedVulkan::Serialise_vkCreateFramebuffer(SerialiserType &ser, VkDevice 
       {
         live = GetResourceManager()->WrapResource(Unwrap(device), fb);
         GetResourceManager()->AddLiveResource(Framebuffer, fb);
+
+        NameVulkanObject(fb, StringFormat::Fmt("Framebuffer %s", ToStr(Framebuffer).c_str()));
 
         VulkanCreationInfo::Framebuffer fbinfo;
         fbinfo.Init(GetResourceManager(), m_CreationInfo, &CreateInfo);
@@ -761,6 +817,9 @@ bool WrappedVulkan::Serialise_vkCreateFramebuffer(SerialiserType &ser, VkDevice 
 
             // register as a live-only resource, so it is cleaned up properly
             GetResourceManager()->AddLiveResource(loadFBid, fbinfo.loadFBs[s]);
+
+            NameVulkanObject(fbinfo.loadFBs[s], StringFormat::Fmt("Framebuffer %s loadFB %d",
+                                                                  ToStr(Framebuffer).c_str(), s));
           }
         }
 
@@ -992,7 +1051,8 @@ bool WrappedVulkan::Serialise_vkCreateRenderPass(SerialiserType &ser, VkDevice d
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating render pass, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -1244,7 +1304,8 @@ bool WrappedVulkan::Serialise_vkCreateRenderPass2(SerialiserType &ser, VkDevice 
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating render pass, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -1443,7 +1504,8 @@ bool WrappedVulkan::Serialise_vkCreateQueryPool(SerialiserType &ser, VkDevice de
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating query pool, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -1619,7 +1681,8 @@ bool WrappedVulkan::Serialise_vkCreateSamplerYcbcrConversion(
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating YCbCr sampler, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -2048,6 +2111,7 @@ bool WrappedVulkan::Serialise_SetShaderDebugPath(SerialiserType &ser, VkShaderMo
   if(IsReplayingAndReading())
   {
     m_CreationInfo.m_ShaderModule[GetResID(ShaderObject)].unstrippedPath = DebugPath;
+    m_CreationInfo.m_ShaderModule[GetResID(ShaderObject)].Reinit();
 
     AddResourceCurChunk(GetResourceManager()->GetOriginalID(GetResID(ShaderObject)));
   }
@@ -2072,6 +2136,11 @@ VkResult WrappedVulkan::vkDebugMarkerSetObjectTagEXT(VkDevice device,
       SCOPED_SERIALISE_CHUNK(VulkanChunk::SetShaderDebugPath);
       Serialise_SetShaderDebugPath(ser, (VkShaderModule)(uint64_t)data.record->Resource, DebugPath);
       data.record->AddChunk(scope.Get());
+    }
+    else if(data.record && pTagInfo->tagName == VR_ThumbnailTag_UUID &&
+            pTagInfo->objectType == VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+    {
+      m_CurrentVRBackbuffer = data.record->GetResourceID();
     }
     else if(ObjDisp(device)->DebugMarkerSetObjectTagEXT)
     {
@@ -2110,6 +2179,73 @@ bool WrappedVulkan::Serialise_vkDebugMarkerSetObjectNameEXT(
       m_CreationInfo.m_Names[Object] = ObjectName;
     else
       m_CreationInfo.m_Names[GetResourceManager()->GetLiveID(Object)] = ObjectName;
+
+    VkDebugMarkerObjectNameInfoEXT name = {VK_STRUCTURE_TYPE_DEBUG_MARKER_OBJECT_NAME_INFO_EXT};
+    name.pObjectName = ObjectName;
+    WrappedVkRes *res = GetResourceManager()->GetLiveResource(Object);
+
+    if(res)
+    {
+      if(IsDispatchableRes(res))
+      {
+        WrappedVkDispRes *disp = (WrappedVkDispRes *)res;
+        name.object = disp->real.handle;
+      }
+      else
+      {
+        WrappedVkNonDispRes *nondisp = (WrappedVkNonDispRes *)res;
+        name.object = nondisp->real.handle;
+      }
+
+      VkDebugReportObjectTypeEXT type = VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT;
+
+      switch(IdentifyTypeByPtr(res))
+      {
+        case eResUnknown: type = VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT; break;
+        case eResPhysicalDevice: type = VK_DEBUG_REPORT_OBJECT_TYPE_PHYSICAL_DEVICE_EXT; break;
+        case eResInstance: type = VK_DEBUG_REPORT_OBJECT_TYPE_INSTANCE_EXT; break;
+        case eResDevice: type = VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT; break;
+        case eResQueue: type = VK_DEBUG_REPORT_OBJECT_TYPE_QUEUE_EXT; break;
+        case eResDeviceMemory: type = VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT; break;
+        case eResBuffer: type = VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT; break;
+        case eResBufferView: type = VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_VIEW_EXT; break;
+        case eResImage: type = VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT; break;
+        case eResImageView: type = VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT; break;
+        case eResFramebuffer: type = VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT; break;
+        case eResRenderPass: type = VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT; break;
+        case eResShaderModule: type = VK_DEBUG_REPORT_OBJECT_TYPE_SHADER_MODULE_EXT; break;
+        case eResPipelineCache: type = VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_CACHE_EXT; break;
+        case eResPipelineLayout: type = VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_LAYOUT_EXT; break;
+        case eResPipeline: type = VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_EXT; break;
+        case eResSampler: type = VK_DEBUG_REPORT_OBJECT_TYPE_SAMPLER_EXT; break;
+        case eResDescriptorPool: type = VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_POOL_EXT; break;
+        case eResDescriptorSetLayout:
+          type = VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT_EXT;
+          break;
+        case eResDescriptorSet: type = VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_SET_EXT; break;
+        case eResCommandPool: type = VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_POOL_EXT; break;
+        case eResCommandBuffer: type = VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_BUFFER_EXT; break;
+        case eResFence: type = VK_DEBUG_REPORT_OBJECT_TYPE_FENCE_EXT; break;
+        case eResEvent: type = VK_DEBUG_REPORT_OBJECT_TYPE_EVENT_EXT; break;
+        case eResQueryPool: type = VK_DEBUG_REPORT_OBJECT_TYPE_QUERY_POOL_EXT; break;
+        case eResSemaphore: type = VK_DEBUG_REPORT_OBJECT_TYPE_SEMAPHORE_EXT; break;
+        case eResSwapchain: type = VK_DEBUG_REPORT_OBJECT_TYPE_SWAPCHAIN_KHR_EXT; break;
+        case eResSurface: type = VK_DEBUG_REPORT_OBJECT_TYPE_SURFACE_KHR_EXT; break;
+        case eResDescUpdateTemplate:
+          type = VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_EXT;
+          break;
+        case eResSamplerConversion:
+          type = VK_DEBUG_REPORT_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION_EXT;
+          break;
+      }
+
+      if(ObjDisp(m_Device)->DebugMarkerSetObjectNameEXT &&
+         type != VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT)
+      {
+        name.objectType = type;
+        ObjDisp(m_Device)->DebugMarkerSetObjectNameEXT(Unwrap(m_Device), &name);
+      }
+    }
 
     ResourceDescription &descr = GetResourceDesc(Object);
 
@@ -2229,6 +2365,67 @@ bool WrappedVulkan::Serialise_vkSetDebugUtilsObjectNameEXT(
     else
       m_CreationInfo.m_Names[GetResourceManager()->GetLiveID(Object)] = ObjectName;
 
+    VkDebugUtilsObjectNameInfoEXT name = {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+    name.pObjectName = ObjectName;
+    WrappedVkRes *res = GetResourceManager()->GetLiveResource(Object, true);
+
+    if(res)
+    {
+      if(IsDispatchableRes(res))
+      {
+        WrappedVkDispRes *disp = (WrappedVkDispRes *)res;
+        name.objectHandle = disp->real.handle;
+      }
+      else
+      {
+        WrappedVkNonDispRes *nondisp = (WrappedVkNonDispRes *)res;
+        name.objectHandle = nondisp->real.handle;
+      }
+
+      VkObjectType type = VK_OBJECT_TYPE_UNKNOWN;
+
+      switch(IdentifyTypeByPtr(res))
+      {
+        case eResUnknown: type = VK_OBJECT_TYPE_UNKNOWN; break;
+        case eResPhysicalDevice: type = VK_OBJECT_TYPE_PHYSICAL_DEVICE; break;
+        case eResInstance: type = VK_OBJECT_TYPE_INSTANCE; break;
+        case eResDevice: type = VK_OBJECT_TYPE_DEVICE; break;
+        case eResQueue: type = VK_OBJECT_TYPE_QUEUE; break;
+        case eResDeviceMemory: type = VK_OBJECT_TYPE_DEVICE_MEMORY; break;
+        case eResBuffer: type = VK_OBJECT_TYPE_BUFFER; break;
+        case eResBufferView: type = VK_OBJECT_TYPE_BUFFER_VIEW; break;
+        case eResImage: type = VK_OBJECT_TYPE_IMAGE; break;
+        case eResImageView: type = VK_OBJECT_TYPE_IMAGE_VIEW; break;
+        case eResFramebuffer: type = VK_OBJECT_TYPE_FRAMEBUFFER; break;
+        case eResRenderPass: type = VK_OBJECT_TYPE_RENDER_PASS; break;
+        case eResShaderModule: type = VK_OBJECT_TYPE_SHADER_MODULE; break;
+        case eResPipelineCache: type = VK_OBJECT_TYPE_PIPELINE_CACHE; break;
+        case eResPipelineLayout: type = VK_OBJECT_TYPE_PIPELINE_LAYOUT; break;
+        case eResPipeline: type = VK_OBJECT_TYPE_PIPELINE; break;
+        case eResSampler: type = VK_OBJECT_TYPE_SAMPLER; break;
+        case eResDescriptorPool: type = VK_OBJECT_TYPE_DESCRIPTOR_POOL; break;
+        case eResDescriptorSetLayout: type = VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT; break;
+        case eResDescriptorSet: type = VK_OBJECT_TYPE_DESCRIPTOR_SET; break;
+        case eResCommandPool: type = VK_OBJECT_TYPE_COMMAND_POOL; break;
+        case eResCommandBuffer: type = VK_OBJECT_TYPE_COMMAND_BUFFER; break;
+        case eResFence: type = VK_OBJECT_TYPE_FENCE; break;
+        case eResEvent: type = VK_OBJECT_TYPE_EVENT; break;
+        case eResQueryPool: type = VK_OBJECT_TYPE_QUERY_POOL; break;
+        case eResSemaphore: type = VK_OBJECT_TYPE_SEMAPHORE; break;
+        case eResSwapchain: type = VK_OBJECT_TYPE_SWAPCHAIN_KHR; break;
+        case eResSurface: type = VK_OBJECT_TYPE_SURFACE_KHR; break;
+        case eResDescUpdateTemplate: type = VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE; break;
+        case eResSamplerConversion: type = VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION; break;
+      }
+
+      if(ObjDisp(m_Device)->SetDebugUtilsObjectNameEXT && type != VK_OBJECT_TYPE_UNKNOWN &&
+         type != VK_OBJECT_TYPE_PHYSICAL_DEVICE)
+      {
+        name.objectType = type;
+        ObjDisp(m_Device)->SetDebugUtilsObjectNameEXT(Unwrap(m_Device), &name);
+      }
+    }
+
     ResourceDescription &descr = GetResourceDesc(Object);
 
     AddResourceCurChunk(descr);
@@ -2285,6 +2482,11 @@ VkResult WrappedVulkan::vkSetDebugUtilsObjectTagEXT(VkDevice device,
       SCOPED_SERIALISE_CHUNK(VulkanChunk::SetShaderDebugPath);
       Serialise_SetShaderDebugPath(ser, (VkShaderModule)(uint64_t)data.record->Resource, DebugPath);
       data.record->AddChunk(scope.Get());
+    }
+    else if(data.record && pTagInfo->tagName == VR_ThumbnailTag_UUID &&
+            pTagInfo->objectType == VK_OBJECT_TYPE_IMAGE)
+    {
+      m_CurrentVRBackbuffer = data.record->GetResourceID();
     }
     else if(ObjDisp(device)->SetDebugUtilsObjectTagEXT)
     {

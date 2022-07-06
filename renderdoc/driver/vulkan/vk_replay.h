@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -226,6 +226,7 @@ enum TexDisplayFlags
   eTexDisplay_RemapFloat = 0x20,
   eTexDisplay_RemapUInt = 0x40,
   eTexDisplay_RemapSInt = 0x80,
+  eTexDisplay_RemapSRGB = 0x100,
 };
 
 struct ShaderDebugData
@@ -245,10 +246,10 @@ struct ShaderDebugData
   VkFramebuffer Framebuffer = VK_NULL_HANDLE;
   VkRenderPass RenderPass = VK_NULL_HANDLE;
 
-  VkDescriptorImageInfo DummyImageInfos[3][6] = {};
-  VkWriteDescriptorSet DummyWrites[3][7] = {};
+  VkDescriptorImageInfo DummyImageInfos[4][6] = {};
+  VkWriteDescriptorSet DummyWrites[4][7] = {};
 
-  VkShaderModule Module[6] = {};
+  VkShaderModule Module[7] = {};
 
   std::map<uint32_t, VkPipeline> m_Pipelines;
 
@@ -267,7 +268,7 @@ public:
   bool IsRemoteProxy() { return m_Proxy; }
   void Shutdown();
 
-  ReplayStatus FatalErrorCheck();
+  RDResult FatalErrorCheck();
   IReplayDriver *MakeDummyDriver();
 
   void CreateResources();
@@ -307,7 +308,7 @@ public:
   void SavePipelineState(uint32_t eventId);
   void FreeTargetResource(ResourceId id);
 
-  ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
+  RDResult ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers);
   void ReplayLog(uint32_t endEventID, ReplayLogType replayType);
   SDFile *GetStructuredFile();
 
@@ -370,6 +371,7 @@ public:
   {
     return {ShaderEncoding::SPIRV, ShaderEncoding::GLSL};
   }
+  rdcarray<ShaderSourcePrefix> GetCustomShaderSourcePrefixes();
   rdcarray<ShaderEncoding> GetTargetShaderEncodings()
   {
     return {ShaderEncoding::SPIRV, ShaderEncoding::GLSL};
@@ -588,16 +590,16 @@ private:
 
     // images and views are re-used elsewhere in replay, so index them sensibly
     //
-    // [float/uint/sint][1D/2D/3D/MS/Cube]
+    // [float/uint/sint/depth][1D/2D/3D/MS/Cube]
     //
     // the cube image is re-used from the 2D one, so only the view is valid
-    VkImage DummyImages[3][5] = {};
-    VkImageView DummyImageViews[3][5] = {};
+    VkImage DummyImages[4][5] = {};
+    VkImageView DummyImageViews[4][5] = {};
     VkWriteDescriptorSet DummyWrites[14] = {};
     VkDescriptorImageInfo DummyInfos[14] = {};
     VkSampler DummySampler = VK_NULL_HANDLE;
     VkBuffer DummyBuffer = VK_NULL_HANDLE;
-    VkBufferView DummyBufferView[3] = {};
+    VkBufferView DummyBufferView[4] = {};
 
     std::map<ResourceId, TextureDisplayViews> TextureViews;
 

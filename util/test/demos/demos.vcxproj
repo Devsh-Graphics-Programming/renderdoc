@@ -284,6 +284,7 @@
     <ClCompile Include="vk\vk_descriptor_reuse.cpp" />
     <ClCompile Include="vk\vk_descriptor_variable_count.cpp" />
     <ClCompile Include="vk\vk_discard_zoo.cpp" />
+    <ClCompile Include="vk\vk_dynamic_rendering.cpp" />
     <ClCompile Include="vk\vk_empty_capture.cpp" />
     <ClCompile Include="vk\vk_extended_dyn_state.cpp" />
     <ClCompile Include="vk\vk_khr_buffer_address.cpp" />
@@ -293,6 +294,7 @@
     <ClCompile Include="vk\vk_load_store_none.cpp" />
     <ClCompile Include="vk\vk_mesh_zoo.cpp" />
     <ClCompile Include="vk\vk_multi_entry.cpp" />
+    <ClCompile Include="vk\vk_multi_present.cpp" />
     <ClCompile Include="vk\vk_parameter_zoo.cpp" />
     <ClCompile Include="vk\vk_imageless_framebuffer.cpp" />
     <ClCompile Include="vk\vk_image_layouts.cpp" />
@@ -300,6 +302,7 @@
     <ClCompile Include="vk\vk_line_raster.cpp" />
     <ClCompile Include="vk\vk_misaligned_dirty.cpp" />
     <ClCompile Include="vk\vk_multi_thread_windows.cpp" />
+    <ClCompile Include="vk\vk_postponed.cpp" />
     <ClCompile Include="vk\vk_query_pool.cpp" />
     <ClCompile Include="vk\vk_robustness2.cpp" />
     <ClCompile Include="vk\vk_separate_depth_stencil_layouts.cpp" />

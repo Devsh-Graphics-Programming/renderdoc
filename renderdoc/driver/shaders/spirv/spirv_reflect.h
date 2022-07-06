@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -107,13 +107,14 @@ private:
   rdcstr StringiseConstant(rdcspv::Id id) const;
   void CheckDebuggable(bool &debuggable, rdcstr &debugStatus) const;
 
-  void MakeConstantBlockVariables(const DataType &structType, uint32_t arraySize,
-                                  uint32_t arrayByteStride, rdcarray<ShaderConstant> &cblock,
+  void MakeConstantBlockVariables(rdcspv::StorageClass storage, const DataType &structType,
+                                  uint32_t arraySize, uint32_t arrayByteStride,
+                                  rdcarray<ShaderConstant> &cblock,
                                   SparseIdMap<uint16_t> &pointerTypes,
                                   const rdcarray<SpecConstant> &specInfo) const;
   void MakeConstantBlockVariable(ShaderConstant &outConst, SparseIdMap<uint16_t> &pointerTypes,
-                                 const DataType &type, const rdcstr &name,
-                                 const Decorations &varDecorations,
+                                 rdcspv::StorageClass storage, const DataType &type,
+                                 const rdcstr &name, const Decorations &varDecorations,
                                  const rdcarray<SpecConstant> &specInfo) const;
   void AddSignatureParameter(const bool isInput, const ShaderStage stage, const Id id,
                              const Id structID, uint32_t &regIndex,
@@ -125,6 +126,7 @@ private:
   rdcstr cmdline;
   DenseIdMap<rdcstr> strings;
   rdcarray<SourceFile> sources;
+  SparseIdMap<size_t> debugSources;
 
   Id curBlock;
   std::set<Id> loopBlocks;

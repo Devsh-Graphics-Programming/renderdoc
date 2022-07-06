@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -138,9 +138,9 @@ struct RDCThumbnailProvider : public IThumbnailProvider, IInitializeWithStream
       }
 
       StreamReader reader(captureHeader.data(), (ULONG)size);
-      m_ddsData = load_dds_from_file(&reader);
+      RDResult res = load_dds_from_file(&reader, m_ddsData);
 
-      if(m_ddsData.subresources.empty())
+      if(res != ResultCode::Succeeded)
       {
         return E_INVALIDARG;
       }

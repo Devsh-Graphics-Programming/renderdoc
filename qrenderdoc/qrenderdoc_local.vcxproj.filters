@@ -82,6 +82,9 @@
     <Filter Include="Resources\Files">
       <UniqueIdentifier>{c6877252-7f18-4c63-a2f7-66b1913d8ada}</UniqueIdentifier>
     </Filter>
+    <Filter Include="3rdparty\catch">
+      <UniqueIdentifier>{3e544acc-65a0-4558-8a31-8865c030e996}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="3rdparty\toolwindowmanager\ToolWindowManager.cpp">
@@ -185,9 +188,6 @@
     </ClCompile>
     <ClCompile Include="Widgets\Extended\RDTreeWidget.cpp">
       <Filter>Widgets\Extended</Filter>
-    </ClCompile>
-    <ClCompile Include="Windows\ConstantBufferPreviewer.cpp">
-      <Filter>Windows</Filter>
     </ClCompile>
     <ClCompile Include="Widgets\BufferFormatSpecifier.cpp">
       <Filter>Widgets</Filter>
@@ -414,10 +414,7 @@
     <ClCompile Include="$(IntDir)generated\moc_CaptureDialog.cpp">
       <Filter>Generated Files</Filter>
     </ClCompile>
-   <ClCompile Include="$(IntDir)generated\moc_ComputeDebugSelector.cpp">
-    <Filter>Generated Files</Filter>
-   </ClCompile>
-    <ClCompile Include="$(IntDir)generated\moc_ConstantBufferPreviewer.cpp">
+    <ClCompile Include="$(IntDir)generated\moc_ComputeDebugSelector.cpp">
       <Filter>Generated Files</Filter>
     </ClCompile>
     <ClCompile Include="$(IntDir)generated\moc_CustomPaintWidget.cpp">
@@ -980,10 +977,7 @@
     <ClInclude Include="$(IntDir)generated\ui_CaptureDialog.h">
       <Filter>Generated Files</Filter>
     </ClInclude>
-   <ClInclude Include="$(IntDir)generated\ui_ComputeDebugSelector.h">
-    <Filter>Generated Files</Filter>
-   </ClInclude>
-    <ClInclude Include="$(IntDir)generated\ui_ConstantBufferPreviewer.h">
+    <ClInclude Include="$(IntDir)generated\ui_ComputeDebugSelector.h">
       <Filter>Generated Files</Filter>
     </ClInclude>
     <ClInclude Include="$(IntDir)generated\ui_D3D11PipelineStateViewer.h">
@@ -1142,6 +1136,12 @@
     <ClInclude Include="$(IntDir)generated\ui_ShaderMessageViewer.h">
       <Filter>Generated Files</Filter>
     </ClInclude>
+    <ClInclude Include="3rdparty\catch\catch.hpp">
+      <Filter>3rdparty\catch</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\catch\official\catch.hpp">
+      <Filter>3rdparty\catch</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="Code\pyrenderdoc\pyconversion.h">
@@ -1182,9 +1182,6 @@
       <Filter>Windows</Filter>
     </CustomBuild>
     <CustomBuild Include="Windows\BufferViewer.ui">
-      <Filter>Windows</Filter>
-    </CustomBuild>
-    <CustomBuild Include="Windows\ConstantBufferPreviewer.ui">
       <Filter>Windows</Filter>
     </CustomBuild>
     <CustomBuild Include="Windows\DebugMessageView.ui">
@@ -1272,9 +1269,6 @@
       <Filter>Windows</Filter>
     </CustomBuild>
     <CustomBuild Include="Windows\BufferViewer.h">
-      <Filter>Windows</Filter>
-    </CustomBuild>
-    <CustomBuild Include="Windows\ConstantBufferPreviewer.h">
       <Filter>Windows</Filter>
     </CustomBuild>
     <CustomBuild Include="Windows\DebugMessageView.h">
@@ -1970,6 +1964,18 @@
       <Filter>Resources\Files</Filter>
     </Image>
     <Image Include="Resources\filter%402x.png">
+      <Filter>Resources\Files</Filter>
+    </Image>
+    <Image Include="Resources\align.png">
+      <Filter>Resources\Files</Filter>
+    </Image>
+    <Image Include="Resources\align%402x.png">
+      <Filter>Resources\Files</Filter>
+    </Image>
+    <Image Include="Resources\help.png">
+      <Filter>Resources\Files</Filter>
+    </Image>
+    <Image Include="Resources\help%402x.png">
       <Filter>Resources\Files</Filter>
     </Image>
   </ItemGroup>

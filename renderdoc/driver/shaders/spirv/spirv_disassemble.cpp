@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #include "common/formatting.h"
+#include "maths/half_convert.h"
 #include "spirv_op_helpers.h"
 #include "spirv_reflect.h"
 
@@ -434,24 +435,30 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint,
 
           switch(type.scalar().Type())
           {
-            case VarType::Float:
-            case VarType::Half: ret += ToStr(value.f32v[0]); break;
+            case VarType::Half: ret += ToStr(value.f16v[0]); break;
+            case VarType::Float: ret += ToStr(value.f32v[0]); break;
             case VarType::Double: ret += ToStr(value.f64v[0]); break;
-            case VarType::SInt:
-            case VarType::SShort:
-            case VarType::SByte: ret += ToStr(value.s32v[0]); break;
+            case VarType::SInt: ret += ToStr(value.s32v[0]); break;
+            case VarType::SShort: ret += ToStr(value.s16v[0]); break;
+            case VarType::SByte: ret += ToStr(value.s8v[0]); break;
             case VarType::Bool: ret += value.u32v[0] ? "true" : "false"; break;
-            case VarType::UInt:
-            case VarType::UShort:
-            case VarType::UByte: ret += ToStr(value.u32v[0]); break;
+            case VarType::UInt: ret += ToStr(value.u32v[0]); break;
+            case VarType::UShort: ret += ToStr(value.u16v[0]); break;
+            case VarType::UByte: ret += ToStr(value.u8v[0]); break;
             case VarType::SLong: ret += ToStr(value.s64v[0]); break;
+            case VarType::ULong:
+              ret += ToStr(value.u64v[0]);
+              break;
+            // none of these types are expected, either because they're opaque or (for struct)
+            // because ConstantComposite should have been used
+            case VarType::Enum:
+            case VarType::Struct:
             case VarType::Unknown:
             case VarType::GPUPointer:
             case VarType::ConstantBlock:
             case VarType::ReadOnlyResource:
             case VarType::ReadWriteResource:
-            case VarType::Sampler:
-            case VarType::ULong: ret += ToStr(value.u64v[0]); break;
+            case VarType::Sampler: ret += "???"; break;
           }
 
           ret += getDecorationString(decorations[decoded.result]);
@@ -1533,44 +1540,74 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint,
           break;
         }
 
-        // need to handle this by hand anyway
         case Op::ExtInst:
         {
-          OpDecoder decoded(it);
-          ret += indent;
-          ret += StringFormat::Fmt("%s = ", declName(decoded.resultType, decoded.result).c_str());
+          OpExtInst decoded(it);
 
-          rdcstr setname = extSets.find(Id::fromWord(it.word(3)))->second;
+          rdcstr setname = extSets.find(decoded.set)->second;
           uint32_t inst = it.word(4);
 
-          const bool IsGLSL450 = (setname == "GLSL.std.450");
-          const bool IsDebugPrintf = (setname == "NonSemantic.DebugPrintf");
+          const bool IsGLSL450 = knownExtSet[ExtSet_GLSL450] == decoded.set;
+          const bool IsDebugPrintf = knownExtSet[ExtSet_Printf] == decoded.set;
+          const bool IsShaderDbg = knownExtSet[ExtSet_ShaderDbg] == decoded.set;
           // GLSL.std.450 all parameters are Ids
           const bool idParams = IsGLSL450 || setname.beginsWith("NonSemantic.");
 
-          if(IsGLSL450)
-            ret += StringFormat::Fmt("%s::%s(", setname.c_str(), ToStr(GLSLstd450(inst)).c_str());
-          else if(IsDebugPrintf)
-            ret += "DebugPrintf(";
-          else
-            ret += StringFormat::Fmt("%s::[%u](", setname.c_str(), inst);
-
-          for(size_t i = 5; i < it.size(); i++)
+          // most vulkan debug info instructions don't get printed explicitly, and those that do
+          // have no return value that we print
+          if(IsShaderDbg)
           {
-            if(i == 5 && IsDebugPrintf)
-              ret += "\"";
+            OpShaderDbg dbg(it);
 
-            // TODO could generate this from the instruction set grammar.
-            ret += idParams ? idName(Id::fromWord(it.word(i))) : ToStr(it.word(i));
-
-            if(i == 5 && IsDebugPrintf)
-              ret += "\"";
-
-            if(i + 1 < it.size())
+            if(dbg.inst == ShaderDbg::Source)
+            {
+              dynamicNames[dbg.result] = idName(dbg.arg<Id>(0));
+              continue;
+            }
+            else if(dbg.inst == ShaderDbg::CompilationUnit)
+            {
+              uint32_t lang = EvaluateConstant(dbg.arg<Id>(3), {}).value.u32v[0];
+              ret += indent;
+              ret += "DebugCompilationUnit(";
+              ret += idName(dbg.arg<Id>(2));
               ret += ", ";
+              ret += ToStr(rdcspv::SourceLanguage(lang));
+              ret += ")";
+            }
+            else
+            {
+              continue;
+            }
           }
+          else
+          {
+            ret += indent;
+            ret += StringFormat::Fmt("%s = ", declName(decoded.resultType, decoded.result).c_str());
 
-          ret += ")";
+            if(IsGLSL450)
+              ret += StringFormat::Fmt("%s::%s(", setname.c_str(), ToStr(GLSLstd450(inst)).c_str());
+            else if(IsDebugPrintf)
+              ret += "DebugPrintf(";
+            else
+              ret += StringFormat::Fmt("%s::[%u](", setname.c_str(), inst);
+
+            for(uint32_t i = 0; i < decoded.params.size(); i++)
+            {
+              if(i == 5 && IsDebugPrintf)
+                ret += "\"";
+
+              // TODO could generate this from the instruction set grammar.
+              ret += idParams ? idName(decoded.arg<Id>(i)) : ToStr(decoded.arg<uint32_t>(i));
+
+              if(i == 5 && IsDebugPrintf)
+                ret += "\"";
+
+              if(i + 1 < decoded.params.size())
+                ret += ", ";
+            }
+
+            ret += ")";
+          }
           break;
         }
 
@@ -1632,24 +1669,26 @@ rdcstr Reflector::StringiseConstant(rdcspv::Id id) const
 
     switch(value.type)
     {
-      case VarType::Float:
-      case VarType::Half: return ToStr(value.value.f32v[0]);
+      case VarType::Half: return ToStr(value.value.f16v[0]);
+      case VarType::Float: return ToStr(value.value.f32v[0]);
       case VarType::Double: return ToStr(value.value.f64v[0]);
-      case VarType::SInt:
-      case VarType::SShort:
-      case VarType::SByte: return ToStr(value.value.s32v[0]);
+      case VarType::SInt: return ToStr(value.value.s32v[0]);
+      case VarType::SShort: return ToStr(value.value.s16v[0]);
+      case VarType::SByte: return ToStr(value.value.s8v[0]);
       case VarType::Bool: return value.value.u32v[0] ? "true" : "false";
-      case VarType::UInt:
-      case VarType::UShort:
-      case VarType::UByte: return ToStr(value.value.u32v[0]);
+      case VarType::UInt: return ToStr(value.value.u32v[0]);
+      case VarType::UShort: return ToStr(value.value.u16v[0]);
+      case VarType::UByte: return ToStr(value.value.u8v[0]);
       case VarType::SLong: return ToStr(value.value.s64v[0]);
+      case VarType::ULong: return ToStr(value.value.u64v[0]);
+      case VarType::Enum:
+      case VarType::Struct:
       case VarType::Unknown:
       case VarType::GPUPointer:
       case VarType::ConstantBlock:
       case VarType::ReadOnlyResource:
       case VarType::ReadWriteResource:
-      case VarType::Sampler:
-      case VarType::ULong: return ToStr(value.value.u64v[0]);
+      case VarType::Sampler: return "???";
     }
   }
   else if(type.type == DataType::VectorType)
@@ -1659,24 +1698,26 @@ rdcstr Reflector::StringiseConstant(rdcspv::Id id) const
     {
       switch(value.type)
       {
-        case VarType::Float:
-        case VarType::Half: ret += ToStr(value.value.f32v[i]); break;
+        case VarType::Half: ret += ToStr(value.value.f16v[i]); break;
+        case VarType::Float: ret += ToStr(value.value.f32v[i]); break;
         case VarType::Double: ret += ToStr(value.value.f64v[i]); break;
-        case VarType::SInt:
-        case VarType::SShort:
-        case VarType::SByte: ret += ToStr(value.value.s32v[i]); break;
-        case VarType::UInt:
-        case VarType::UShort:
-        case VarType::UByte: ret += ToStr(value.value.u32v[i]); break;
+        case VarType::SInt: ret += ToStr(value.value.s32v[i]); break;
+        case VarType::SShort: ret += ToStr(value.value.s16v[i]); break;
+        case VarType::SByte: ret += ToStr(value.value.s8v[i]); break;
+        case VarType::Bool: ret += value.value.u32v[i] ? "true" : "false"; break;
+        case VarType::UInt: ret += ToStr(value.value.u32v[i]); break;
+        case VarType::UShort: ret += ToStr(value.value.u16v[i]); break;
+        case VarType::UByte: ret += ToStr(value.value.u8v[i]); break;
         case VarType::SLong: ret += ToStr(value.value.s64v[i]); break;
-        case VarType::Bool: return value.value.u32v[0] ? "true" : "false";
+        case VarType::ULong: ret += ToStr(value.value.u64v[i]); break;
+        case VarType::Enum:
+        case VarType::Struct:
         case VarType::Unknown:
         case VarType::GPUPointer:
         case VarType::ConstantBlock:
         case VarType::ReadOnlyResource:
         case VarType::ReadWriteResource:
-        case VarType::Sampler:
-        case VarType::ULong: ret += ToStr(value.value.u64v[i]); break;
+        case VarType::Sampler: ret += "???"; break;
       }
       if(i + 1 < value.columns)
         ret += ", ";

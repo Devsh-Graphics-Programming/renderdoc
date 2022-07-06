@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -160,7 +160,7 @@ public:
 
   virtual FrameRecord GetFrameRecord() = 0;
 
-  virtual ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers) = 0;
+  virtual RDResult ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers) = 0;
   virtual void ReplayLog(uint32_t endEventID, ReplayLogType replayType) = 0;
   virtual SDFile *GetStructuredFile() = 0;
 
@@ -212,7 +212,7 @@ public:
   virtual bool IsRenderOutput(ResourceId id) = 0;
 
   virtual void FileChanged() = 0;
-  virtual ReplayStatus FatalErrorCheck() = 0;
+  virtual RDResult FatalErrorCheck() = 0;
 
   virtual bool NeedRemapForFetch(const ResourceFormat &format) = 0;
 
@@ -269,6 +269,7 @@ public:
                                  const rdcstr &entry, const ShaderCompileFlags &compileFlags,
                                  ShaderStage type, ResourceId &id, rdcstr &errors) = 0;
   virtual rdcarray<ShaderEncoding> GetCustomShaderEncodings() = 0;
+  virtual rdcarray<ShaderSourcePrefix> GetCustomShaderSourcePrefixes() = 0;
   virtual ResourceId ApplyCustomShader(TextureDisplay &display) = 0;
   virtual void FreeCustomShader(ResourceId id) = 0;
 
@@ -311,11 +312,12 @@ void PatchTriangleFanRestartIndexBufer(rdcarray<uint32_t> &patchedIndices, uint3
 
 uint64_t CalcMeshOutputSize(uint64_t curSize, uint64_t requiredOutput);
 
-void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescriptor &desc,
+void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantType &desc,
                                  uint32_t dataOffset, const bytebuf &data, ShaderVariable &outvar,
                                  uint32_t matStride);
 void StandardFillCBufferVariables(ResourceId shader, const rdcarray<ShaderConstant> &invars,
                                   rdcarray<ShaderVariable> &outvars, const bytebuf &data);
+void PreprocessLineDirectives(rdcarray<ShaderSourceFile> &sourceFiles);
 
 // simple cache for when we need buffer data for highlighting
 // vertices, typical use will be lots of vertices in the same

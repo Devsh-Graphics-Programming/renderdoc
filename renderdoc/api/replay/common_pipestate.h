@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -419,6 +419,37 @@ typical buffer.
 };
 
 DECLARE_REFLECTION_STRUCT(BoundCBuffer);
+
+DOCUMENT("Describes a 2-dimensional int offset");
+struct Offset
+{
+  DOCUMENT("");
+  Offset() = default;
+  Offset(const Offset &) = default;
+  Offset(int32_t x, int32_t y) : x(x), y(y){};
+  Offset &operator=(const Offset &) = default;
+
+  bool operator==(const Offset &o) const { return x == o.x && y == o.y; }
+  bool operator<(const Offset &o) const
+  {
+    if(x != o.x)
+      return x < o.x;
+    return y < o.y;
+  }
+  DOCUMENT(R"(The X offset value.
+
+:type: int
+)");
+  int32_t x = 0;
+
+  DOCUMENT(R"(The Y offset value.
+
+:type: int
+)");
+  int32_t y = 0;
+};
+
+DECLARE_REFLECTION_STRUCT(Offset);
 
 DOCUMENT("Information about a vertex input attribute feeding the vertex shader.");
 struct VertexInputAttribute

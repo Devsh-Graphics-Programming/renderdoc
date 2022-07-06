@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -319,7 +319,7 @@ struct ExtensionInvoker : ObjectForwarder<IExtensionManager>
   //
   rdcarray<ExtensionMetadata> GetInstalledExtensions() { return m_Obj.GetInstalledExtensions(); }
   bool IsExtensionLoaded(rdcstr name) { return m_Obj.IsExtensionLoaded(name); }
-  bool LoadExtension(rdcstr name) { return m_Obj.LoadExtension(name); }
+  rdcstr LoadExtension(rdcstr name) { return m_Obj.LoadExtension(name); }
   IMiniQtHelper &GetMiniQtHelper() { return *m_MiniQt; }
   //
   ///////////////////////////////////////////////////////////////////////
@@ -414,7 +414,7 @@ struct CaptureContextInvoker : ObjectForwarder<ICaptureContext>
   virtual bool IsCaptureLocal() override { return m_Obj.IsCaptureLocal(); }
   virtual bool IsCaptureTemporary() override { return m_Obj.IsCaptureTemporary(); }
   virtual bool IsCaptureLoading() override { return m_Obj.IsCaptureLoading(); }
-  virtual ReplayStatus GetFatalError() override { return m_Obj.GetFatalError(); }
+  virtual ResultDetails GetFatalError() override { return m_Obj.GetFatalError(); }
   virtual rdcstr GetCaptureFilename() override { return m_Obj.GetCaptureFilename(); }
   virtual CaptureModifications GetCaptureModifications() override
   {
@@ -429,6 +429,10 @@ struct CaptureContextInvoker : ObjectForwarder<ICaptureContext>
   virtual rdcarray<ShaderEncoding> CustomShaderEncodings() override
   {
     return m_Obj.CustomShaderEncodings();
+  }
+  virtual rdcarray<ShaderSourcePrefix> CustomShaderSourcePrefixes() override
+  {
+    return m_Obj.CustomShaderSourcePrefixes();
   }
   virtual uint32_t CurSelectedEvent() override { return m_Obj.CurSelectedEvent(); }
   virtual uint32_t CurEvent() override { return m_Obj.CurEvent(); }
@@ -785,11 +789,9 @@ struct CaptureContextInvoker : ObjectForwarder<ICaptureContext>
     return InvokeRetFunction<IBufferViewer *>(&ICaptureContext::ViewTextureAsBuffer, id, sub, format);
   }
 
-  virtual IConstantBufferPreviewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot,
-                                                       uint32_t idx) override
+  virtual IBufferViewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot, uint32_t idx) override
   {
-    return InvokeRetFunction<IConstantBufferPreviewer *>(&ICaptureContext::ViewConstantBuffer,
-                                                         stage, slot, idx);
+    return InvokeRetFunction<IBufferViewer *>(&ICaptureContext::ViewConstantBuffer, stage, slot, idx);
   }
 
   virtual IPixelHistoryView *ViewPixelHistory(ResourceId texID, uint32_t x, uint32_t y,

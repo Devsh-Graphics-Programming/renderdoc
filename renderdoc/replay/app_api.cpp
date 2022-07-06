@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -127,9 +127,9 @@ static void SetCaptureFileComments(const char *filePath, const char *comments)
 
   RDCFile rdc;
   rdc.Open(path);
-  if(rdc.ErrorCode() != ContainerError::NoError)
+  if(rdc.Error() != ResultCode::Succeeded)
   {
-    RDCERR("Error opening '%s' to add capture comments", path.c_str());
+    RDCERR("Error adding capture file comments: %s", ResultDetails(rdc.Error()).Message().c_str());
     return;
   }
 

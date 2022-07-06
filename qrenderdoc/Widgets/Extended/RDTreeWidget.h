@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -122,6 +122,16 @@ public:
     setData(column, Qt::ToolTipRole, value);
     dataChanged(0, Qt::ToolTipRole);
   }
+  inline bool editable(int column) const { return m_editable & (1U << column); }
+  inline void setEditable(int column, bool edit)
+  {
+    uint32_t mask = 1U << column;
+
+    if(edit)
+      m_editable |= mask;
+    else
+      m_editable &= ~mask;
+  }
 
   inline Qt::CheckState checkState(int column) const
   {
@@ -163,6 +173,9 @@ private:
   // each element, per-column, is a list of other data values
   // we allocate this lazily only if it's really needed
   QVector<QVector<RoleData>> *m_data = NULL;
+
+  // bitfield of editable columns
+  uint32_t m_editable = 0;
 
   // per-item properties
   QString m_tooltip;
@@ -224,6 +237,7 @@ public:
   void setClearSelectionOnFocusLoss(bool clear) { m_clearSelectionOnFocusLoss = clear; }
   RDTreeWidgetItem *invisibleRootItem() { return m_root; }
   void addTopLevelItem(RDTreeWidgetItem *item) { m_root->addChild(item); }
+  void insertTopLevelItem(int idx, RDTreeWidgetItem *item) { m_root->insertChild(idx, item); }
   RDTreeWidgetItem *topLevelItem(int index) const { return m_root->child(index); }
   int indexOfTopLevelItem(RDTreeWidgetItem *item) const { return m_root->indexOfChild(item); }
   RDTreeWidgetItem *takeTopLevelItem(int index) { return m_root->takeChild(index); }
@@ -255,7 +269,8 @@ public:
   void expandAllItems(RDTreeWidgetItem *item);
   void collapseItem(RDTreeWidgetItem *item);
   void collapseAllItems(RDTreeWidgetItem *item);
-  void scrollToItem(RDTreeWidgetItem *node);
+  void scrollToItem(RDTreeWidgetItem *item);
+  void editItem(RDTreeWidgetItem *item);
 
   void clear();
 

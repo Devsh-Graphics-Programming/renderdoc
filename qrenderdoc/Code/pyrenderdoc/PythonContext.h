@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -60,7 +60,7 @@ public:
 
   static QStringList GetApplicationExtensionsPaths();
   static void ProcessExtensionWork(std::function<void()> callback);
-  static bool LoadExtension(ICaptureContext &ctx, const rdcstr &extension);
+  static QString LoadExtension(ICaptureContext &ctx, const rdcstr &extension);
   static void ConvertPyArgs(const ExtensionCallbackData &data,
                             rdcarray<rdcpair<rdcstr, PyObject *>> &args);
   static void FreePyArgs(rdcarray<rdcpair<rdcstr, PyObject *>> &args);

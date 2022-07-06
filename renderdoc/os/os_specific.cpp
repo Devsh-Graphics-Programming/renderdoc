@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -78,6 +78,31 @@ rdcstr Fmt(const char *format, ...)
   rdcstr ret;
   ret.resize(size);
   ::utf8printv(ret.data(), size + 1, format, args);
+
+  va_end(args);
+  va_end(args2);
+
+  return ret;
+}
+
+rdcstr Fmt(rdcliteral format, ...)
+{
+  // optimisation - if there are no format specifiers hence no arguments, preserve and return the
+  // literal
+  if(strchr(format.c_str(), '%') == NULL)
+    return format;
+
+  va_list args;
+  va_start(args, format);
+
+  va_list args2;
+  va_copy(args2, args);
+
+  int size = ::utf8printv(NULL, 0, format.c_str(), args2);
+
+  rdcstr ret;
+  ret.resize(size);
+  ::utf8printv(ret.data(), size + 1, format.c_str(), args);
 
   va_end(args);
   va_end(args2);

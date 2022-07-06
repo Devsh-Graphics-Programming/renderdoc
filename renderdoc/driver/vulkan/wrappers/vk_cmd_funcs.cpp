@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -150,7 +150,7 @@ rdcarray<VkImageMemoryBarrier> WrappedVulkan::GetImplicitRenderPassBarriers(uint
     if(m_LastCmdBufferID == ResourceId())
       subpass = m_RenderState.subpass;
     else
-      subpass = GetCmdRenderState().subpass;
+      subpass = m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass;
 
     // transition the attachments in this subpass
     for(size_t i = 0; i < rpinfo.subpasses[subpass].colorAttachments.size(); i++)
@@ -196,6 +196,15 @@ rdcarray<VkImageMemoryBarrier> WrappedVulkan::GetImplicitRenderPassBarriers(uint
       atts.back().attachment = (uint32_t)rpinfo.subpasses[subpass].fragmentDensityAttachment;
       atts.back().layout = rpinfo.subpasses[subpass].fragmentDensityLayout;
     }
+
+    int32_t sr = rpinfo.subpasses[subpass].shadingRateAttachment;
+
+    if(sr != -1)
+    {
+      atts.push_back({});
+      atts.back().attachment = (uint32_t)rpinfo.subpasses[subpass].shadingRateAttachment;
+      atts.back().layout = rpinfo.subpasses[subpass].shadingRateLayout;
+    }
   }
 
   for(size_t i = 0; i < atts.size(); i++)
@@ -206,6 +215,11 @@ rdcarray<VkImageMemoryBarrier> WrappedVulkan::GetImplicitRenderPassBarriers(uint
     // layout transitions on stencil if that's in use
     VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     VkImageMemoryBarrier barrierStencil = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrierStencil.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrierStencil.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
     ResourceId view = fbattachments[idx];
 
@@ -301,6 +315,12 @@ rdcarray<VkImageMemoryBarrier> WrappedVulkan::GetImplicitRenderPassBarriers(uint
       if((uint32_t)rpinfo.subpasses[s - 1].fragmentDensityAttachment == idx)
       {
         barrier.oldLayout = rpinfo.subpasses[s - 1].fragmentDensityLayout;
+        break;
+      }
+
+      if((uint32_t)rpinfo.subpasses[s - 1].shadingRateAttachment == idx)
+      {
+        barrier.oldLayout = rpinfo.subpasses[s - 1].shadingRateLayout;
         break;
       }
     }
@@ -690,7 +710,8 @@ bool WrappedVulkan::Serialise_vkCreateCommandPool(SerialiserType &ser, VkDevice 
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed creating command pool, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -799,7 +820,8 @@ bool WrappedVulkan::Serialise_vkAllocateCommandBuffers(SerialiserType &ser, VkDe
 
     if(ret != VK_SUCCESS)
     {
-      RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed allocating command buffer, VkResult: %s", ToStr(ret).c_str());
       return false;
     }
     else
@@ -997,14 +1019,34 @@ bool WrappedVulkan::Serialise_vkBeginCommandBuffer(SerialiserType &ser, VkComman
     m_BakedCmdBufferInfo[CommandBuffer].markerCount = 0;
     m_BakedCmdBufferInfo[CommandBuffer].imageStates.clear();
     m_BakedCmdBufferInfo[BakedCommandBuffer].imageStates.clear();
+    m_BakedCmdBufferInfo[CommandBuffer].renderPassOpen =
+        m_BakedCmdBufferInfo[BakedCommandBuffer].renderPassOpen = false;
+    m_BakedCmdBufferInfo[CommandBuffer].activeSubpass =
+        m_BakedCmdBufferInfo[BakedCommandBuffer].activeSubpass = 0;
+    m_BakedCmdBufferInfo[CommandBuffer].endBarriers.clear();
+    m_BakedCmdBufferInfo[BakedCommandBuffer].endBarriers.clear();
 
     VkCommandBufferBeginInfo unwrappedBeginInfo = BeginInfo;
     VkCommandBufferInheritanceInfo unwrappedInheritInfo;
     if(BeginInfo.pInheritanceInfo)
     {
       unwrappedInheritInfo = *BeginInfo.pInheritanceInfo;
-      unwrappedInheritInfo.framebuffer = Unwrap(unwrappedInheritInfo.framebuffer);
-      unwrappedInheritInfo.renderPass = Unwrap(unwrappedInheritInfo.renderPass);
+
+      if(m_ActionCallback && m_ActionCallback->ForceLoadRPs())
+      {
+        const VulkanCreationInfo::RenderPass &rpinfo =
+            m_CreationInfo.m_RenderPass[GetResID(unwrappedInheritInfo.renderPass)];
+        const VulkanCreationInfo::Framebuffer &fbinfo =
+            m_CreationInfo.m_Framebuffer[GetResID(unwrappedInheritInfo.framebuffer)];
+
+        unwrappedInheritInfo.framebuffer = Unwrap(fbinfo.loadFBs[unwrappedInheritInfo.subpass]);
+        unwrappedInheritInfo.renderPass = Unwrap(rpinfo.loadRPs[unwrappedInheritInfo.subpass]);
+      }
+      else
+      {
+        unwrappedInheritInfo.framebuffer = Unwrap(unwrappedInheritInfo.framebuffer);
+        unwrappedInheritInfo.renderPass = Unwrap(unwrappedInheritInfo.renderPass);
+      }
 
       unwrappedBeginInfo.pInheritanceInfo = &unwrappedInheritInfo;
 
@@ -1080,7 +1122,8 @@ bool WrappedVulkan::Serialise_vkBeginCommandBuffer(SerialiserType &ser, VkComman
 
         if(ret != VK_SUCCESS)
         {
-          RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+          SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                           "Failed beginning command buffer, VkResult: %s", ToStr(ret).c_str());
           return false;
         }
         else
@@ -1117,6 +1160,8 @@ bool WrappedVulkan::Serialise_vkBeginCommandBuffer(SerialiserType &ser, VkComman
           if(BeginInfo.pInheritanceInfo->renderPass != VK_NULL_HANDLE)
             m_BakedCmdBufferInfo[BakedCommandBuffer].state.SetRenderPass(
                 GetResID(BeginInfo.pInheritanceInfo->renderPass));
+          m_BakedCmdBufferInfo[BakedCommandBuffer].state.subpass =
+              BeginInfo.pInheritanceInfo->subpass;
           if(BeginInfo.pInheritanceInfo->framebuffer != VK_NULL_HANDLE)
             m_BakedCmdBufferInfo[BakedCommandBuffer].state.SetFramebuffer(
                 this, GetResID(BeginInfo.pInheritanceInfo->framebuffer));
@@ -1152,7 +1197,9 @@ bool WrappedVulkan::Serialise_vkBeginCommandBuffer(SerialiserType &ser, VkComman
 
         if(ret != VK_SUCCESS)
         {
-          RDCERR("Failed on resource serialise-creation, VkResult: %s", ToStr(ret).c_str());
+          SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                           "Failed allocating re-recording command buffer, VkResult: %s",
+                           ToStr(ret).c_str());
           return false;
         }
         else
@@ -1336,25 +1383,20 @@ bool WrappedVulkan::Serialise_vkEndCommandBuffer(SerialiserType &ser, VkCommandB
         if(m_Partial[Primary].partialParent == BakedCommandBuffer &&
            m_Partial[Primary].renderPassActive)
         {
+          if(m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen)
+          {
+            RDCERR(
+                "We shouldn't expect any render pass to still be open at "
+                "vkEndCommandBuffer time");
+          }
+
           if(renderstate.dynamicRendering.active)
           {
-            // there are two ways dynamic rendering can be active in a partial command buffer -
-            // either if it's suspended, for which we need to resume and then end without
-            // suspending. Or if we were partial way in and never saw the end, in which case we need
-            // to end and then check if that end itself was a suspend, and do a resume/full end.
-
-            bool suspended = renderstate.dynamicRendering.suspended;
-
-            // if we're not suspended, we were inside an active begin/end pair, so end it
-            if(!suspended)
-            {
-              ObjDisp(commandBuffer)->CmdEndRendering(Unwrap(commandBuffer));
-
-              // now update the suspended state depending on what was declared when we began
-              suspended = (renderstate.dynamicRendering.flags & VK_RENDERING_SUSPENDING_BIT) != 0;
-            }
-
-            // if we were suspended, or are now suspended after that end, do a quick resume & end
+            // the only way dynamic rendering can be active in a partial command buffer is
+            // if it's suspended, as the matching vkCmdEndRendering will be replayed before
+            // vkEndCommandBuffer even if outside of rerecord range.
+            // We need to resume and then end without suspending.
+            bool suspended = (renderstate.dynamicRendering.flags & VK_RENDERING_SUSPENDING_BIT) != 0;
             if(suspended)
             {
               VkRenderingInfo info = {};
@@ -1386,7 +1428,24 @@ bool WrappedVulkan::Serialise_vkEndCommandBuffer(SerialiserType &ser, VkCommandB
               };
 
               if(renderstate.dynamicRendering.fragmentDensityView != VK_NULL_HANDLE)
+              {
+                fragmentDensity.pNext = info.pNext;
                 info.pNext = &fragmentDensity;
+              }
+
+              VkRenderingFragmentShadingRateAttachmentInfoKHR shadingRate = {
+                  VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR,
+                  NULL,
+                  renderstate.dynamicRendering.shadingRateView,
+                  renderstate.dynamicRendering.shadingRateLayout,
+                  renderstate.dynamicRendering.shadingRateTexelSize,
+              };
+
+              if(renderstate.dynamicRendering.shadingRateView != VK_NULL_HANDLE)
+              {
+                shadingRate.pNext = info.pNext;
+                info.pNext = &shadingRate;
+              }
 
               byte *tempMem = GetTempMemory(GetNextPatchSize(&info));
               VkRenderingInfo *unwrappedInfo = UnwrapStructAndChain(m_State, tempMem, &info);
@@ -1421,62 +1480,33 @@ bool WrappedVulkan::Serialise_vkEndCommandBuffer(SerialiserType &ser, VkCommandB
           }
           else
           {
-            uint32_t numSubpasses =
-                (uint32_t)m_CreationInfo.m_RenderPass[renderstate.GetRenderPass()].subpasses.size();
-
             // for each subpass we skip, and for the finalLayout transition at the end of the
-            // renderpass, record these barriers. These are executed implicitly but because we want
+            // renderpass, replay the recorded barriers from the implicit transitions in
+            // renderPassEndStates. These are executed implicitly but because we want
             // to pretend they never happened, we then reverse their effects so that our layout
             // tracking is accurate and the images end up in the layout they were in during the last
-            // active subpass
-            rdcflatmap<ResourceId, ImageState> renderPassEndStates;
+            // active subpass when we stopped partially replaying
+            rdcarray<VkImageMemoryBarrier> &endBarriers =
+                m_BakedCmdBufferInfo[m_LastCmdBufferID].endBarriers;
 
-            for(uint32_t sub = renderstate.subpass + 1; sub < numSubpasses; sub++)
+            // do the barriers in reverse order
+            std::reverse(endBarriers.begin(), endBarriers.end());
+            for(VkImageMemoryBarrier &barrier : endBarriers)
             {
-              ObjDisp(commandBuffer)->CmdNextSubpass(Unwrap(commandBuffer), VK_SUBPASS_CONTENTS_INLINE);
+              std::swap(barrier.oldLayout, barrier.newLayout);
 
-              rdcarray<VkImageMemoryBarrier> subpassBarriers = GetImplicitRenderPassBarriers();
-
-              GetResourceManager()->RecordBarriers(
-                  renderPassEndStates, FindCommandQueueFamily(m_LastCmdBufferID),
-                  (uint32_t)subpassBarriers.size(), subpassBarriers.data());
+              // sanitise layouts before passing to vulkan
+              SanitiseOldImageLayout(barrier.oldLayout);
+              SanitiseReplayImageLayout(barrier.newLayout);
             }
 
-            rdcarray<VkImageMemoryBarrier> finalBarriers = GetImplicitRenderPassBarriers(~0U);
+            // it's unnecessary to replay barriers towards an undefined layout, since every layout
+            // can be considered as undefined
+            endBarriers.removeIf([](const VkImageMemoryBarrier &b) {
+              return b.newLayout == VK_IMAGE_LAYOUT_UNDEFINED;
+            });
 
-            GetResourceManager()->RecordBarriers(
-                renderPassEndStates, FindCommandQueueFamily(m_LastCmdBufferID),
-                (uint32_t)finalBarriers.size(), finalBarriers.data());
-
-            ObjDisp(commandBuffer)->CmdEndRenderPass(Unwrap(commandBuffer));
-
-            // undo any implicit transitions we just went through, so that we can pretend that the
-            // image stayed in the same layout as it was when we stopped partially replaying.
-
-            for(auto it = renderPassEndStates.begin(); it != renderPassEndStates.end(); ++it)
-            {
-              ResourceId id = it->first;
-              ImageState &endState = it->second;
-              endState.SetOverlay();
-              LockedConstImageStateRef current = FindConstImageState(id);
-              if(!current)
-              {
-                RDCERR("Unknown image %s", ToStr(id).c_str());
-              }
-              else
-              {
-                ImageBarrierSequence barriers;
-                endState.Transition(*current, VK_ACCESS_ALL_WRITE_BITS, VK_ACCESS_ALL_READ_BITS,
-                                    barriers, GetImageTransitionInfo());
-                InlineCleanupImageBarriers(commandBuffer, barriers);
-                if(!barriers.empty())
-                {
-                  // This should not happen, because the cleanup barriers are just image layout
-                  // transitions, no queue family transitions
-                  RDCERR("Partial RenderPass replay cleanup barriers could not all be inlined");
-                }
-              }
-            }
+            DoPipelineBarrier(commandBuffer, endBarriers.size(), endBarriers.data());
           }
         }
 
@@ -1633,7 +1663,10 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(SerialiserType &ser, VkComman
         if(ShouldUpdateRenderState(m_LastCmdBufferID, true))
         {
           m_Partial[Primary].renderPassActive = true;
+          m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = true;
         }
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass = 0;
 
         ResourceId fb = GetResID(RenderPassBegin.framebuffer);
         VulkanCreationInfo::Framebuffer fbinfo = m_CreationInfo.m_Framebuffer[fb];
@@ -1671,6 +1704,8 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(SerialiserType &ser, VkComman
 
         rdcarray<VkImageMemoryBarrier> imgBarriers = GetImplicitRenderPassBarriers();
 
+        ApplyRPLoadDiscards(commandBuffer, RenderPassBegin.renderArea);
+
         // if we're just replaying the vkCmdBeginRenderPass on its own, we use the first loadRP
         // instead of the real thing. This then doesn't require us to finish off any subpasses etc.
         // we need to manually do the subpass 0 barriers, since loadRP expects the image to already
@@ -1681,10 +1716,17 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(SerialiserType &ser, VkComman
           unwrappedInfo.renderPass = Unwrap(rpinfo.loadRPs[0]);
           unwrappedInfo.framebuffer = Unwrap(fbinfo.loadFBs[0]);
 
+          if(m_ReplayOptions.optimisation != ReplayOptimisationLevel::Fastest)
+          {
+            for(VkImageMemoryBarrier &barrier : imgBarriers)
+            {
+              if(barrier.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+                barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            }
+          }
+
           DoPipelineBarrier(commandBuffer, imgBarriers.size(), imgBarriers.data());
         }
-
-        ApplyRPLoadDiscards(commandBuffer, RenderPassBegin.renderArea);
 
         ActionFlags drawFlags = ActionFlags::PassBoundary | ActionFlags::BeginPass;
         uint32_t eventId = HandlePreCallback(commandBuffer, drawFlags);
@@ -1723,8 +1765,10 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(SerialiserType &ser, VkComman
             if(clearAspects != 0)
             {
               VulkanCreationInfo::ImageView viewinfo = m_CreationInfo.m_ImageView[fbattachments[att]];
+              bool isMultiview = rpinfo.subpasses[0].multiviews.size() > 1;
 
-              VkClearRect rect = {unwrappedInfo.renderArea, 0, viewinfo.range.layerCount};
+              VkClearRect rect = {unwrappedInfo.renderArea, 0,
+                                  isMultiview ? 1 : viewinfo.range.layerCount};
               VkClearAttachment clear = {};
               clear.aspectMask = FormatImageAspects(rpinfo.attachments[att].format) & clearAspects;
               clear.colorAttachment = c;
@@ -1771,6 +1815,7 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(SerialiserType &ser, VkComman
       ObjDisp(commandBuffer)->CmdBeginRenderPass(Unwrap(commandBuffer), &unwrappedInfo, contents);
 
       // track while reading, for fetching the right set of outputs in AddAction
+      m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass = 0;
       m_BakedCmdBufferInfo[m_LastCmdBufferID].state.subpass = 0;
       m_BakedCmdBufferInfo[m_LastCmdBufferID].state.SetRenderPass(
           GetResID(RenderPassBegin.renderPass));
@@ -1967,6 +2012,7 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass(SerialiserType &ser, VkCommandBuf
 
         {
           GetCmdRenderState().subpass++;
+          m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass++;
         }
 
         ActionFlags drawFlags =
@@ -1987,6 +2033,14 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass(SerialiserType &ser, VkCommandBuf
                                              FindCommandQueueFamily(m_LastCmdBufferID),
                                              (uint32_t)imgBarriers.size(), imgBarriers.data());
       }
+      else if(IsRenderpassOpen(m_LastCmdBufferID) && m_FirstEventID != m_LastEventID)
+      {
+        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
+        ObjDisp(commandBuffer)->CmdNextSubpass(Unwrap(commandBuffer), contents);
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass++;
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].endBarriers.append(GetImplicitRenderPassBarriers());
+      }
     }
     else
     {
@@ -1996,6 +2050,7 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass(SerialiserType &ser, VkCommandBuf
 
       // track while reading, for fetching the right set of outputs in AddAction
       m_BakedCmdBufferInfo[m_LastCmdBufferID].state.subpass++;
+      m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass++;
 
       rdcarray<VkImageMemoryBarrier> imgBarriers = GetImplicitRenderPassBarriers();
 
@@ -2058,13 +2113,15 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass(SerialiserType &ser, VkCommandB
 
         if(ShouldUpdateRenderState(m_LastCmdBufferID, true))
         {
-          m_Partial[Primary].renderPassActive = false;
+          m_Partial[Primary].renderPassActive =
+              m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = false;
         }
 
         rdcarray<ResourceId> attachments;
         VkRect2D renderArea;
-        const VulkanCreationInfo::RenderPass &rpinfo =
-            m_CreationInfo.m_RenderPass[GetCmdRenderState().GetRenderPass()];
+
+        // save the renderpass that we were in here, so we can look up the rpinfo below
+        ResourceId currentRP = GetCmdRenderState().GetRenderPass();
 
         {
           VulkanRenderState &renderstate = GetCmdRenderState();
@@ -2090,6 +2147,8 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass(SerialiserType &ser, VkCommandB
 
         if(m_ReplayOptions.optimisation != ReplayOptimisationLevel::Fastest)
         {
+          const VulkanCreationInfo::RenderPass &rpinfo = m_CreationInfo.m_RenderPass[currentRP];
+
           for(size_t i = 0; i < attachments.size(); i++)
           {
             if(!rpinfo.attachments[i].used)
@@ -2145,6 +2204,14 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass(SerialiserType &ser, VkCommandB
         GetResourceManager()->RecordBarriers(m_BakedCmdBufferInfo[m_LastCmdBufferID].imageStates,
                                              FindCommandQueueFamily(m_LastCmdBufferID),
                                              (uint32_t)imgBarriers.size(), imgBarriers.data());
+      }
+      else if(IsRenderpassOpen(m_LastCmdBufferID))
+      {
+        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
+        ObjDisp(commandBuffer)->CmdEndRenderPass(Unwrap(commandBuffer));
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = false;
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].endBarriers.append(GetImplicitRenderPassBarriers(~0U));
       }
     }
     else
@@ -2250,8 +2317,11 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass2(SerialiserType &ser,
         // only if we're partially recording do we update this state
         if(ShouldUpdateRenderState(m_LastCmdBufferID, true))
         {
-          m_Partial[Primary].renderPassActive = true;
+          m_Partial[Primary].renderPassActive =
+              m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = true;
         }
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass = 0;
 
         ResourceId fb = GetResID(RenderPassBegin.framebuffer);
         VulkanCreationInfo::Framebuffer fbinfo = m_CreationInfo.m_Framebuffer[fb];
@@ -2343,8 +2413,10 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass2(SerialiserType &ser,
             if(clearAspects != 0)
             {
               VulkanCreationInfo::ImageView viewinfo = m_CreationInfo.m_ImageView[fbattachments[att]];
+              bool isMultiview = rpinfo.subpasses[0].multiviews.size() > 1;
 
-              VkClearRect rect = {unwrappedInfo.renderArea, 0, viewinfo.range.layerCount};
+              VkClearRect rect = {unwrappedInfo.renderArea, 0,
+                                  isMultiview ? 1 : viewinfo.range.layerCount};
               VkClearAttachment clear = {};
               clear.aspectMask = FormatImageAspects(rpinfo.attachments[att].format) & clearAspects;
               clear.colorAttachment = c;
@@ -2392,6 +2464,7 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass2(SerialiserType &ser,
           ->CmdBeginRenderPass2(Unwrap(commandBuffer), &unwrappedInfo, &unwrappedBeginInfo);
 
       // track while reading, for fetching the right set of outputs in AddAction
+      m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass = 0;
       m_BakedCmdBufferInfo[m_LastCmdBufferID].state.subpass = 0;
       m_BakedCmdBufferInfo[m_LastCmdBufferID].state.SetRenderPass(
           GetResID(RenderPassBegin.renderPass));
@@ -2603,6 +2676,7 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass2(SerialiserType &ser, VkCommandBu
 
         {
           GetCmdRenderState().subpass++;
+          m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass++;
         }
 
         ActionFlags drawFlags =
@@ -2624,6 +2698,15 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass2(SerialiserType &ser, VkCommandBu
                                              FindCommandQueueFamily(m_LastCmdBufferID),
                                              (uint32_t)imgBarriers.size(), imgBarriers.data());
       }
+      else if(IsRenderpassOpen(m_LastCmdBufferID) && m_FirstEventID != m_LastEventID)
+      {
+        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
+        ObjDisp(commandBuffer)
+            ->CmdNextSubpass2(Unwrap(commandBuffer), &unwrappedBeginInfo, &unwrappedEndInfo);
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass++;
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].endBarriers.append(GetImplicitRenderPassBarriers());
+      }
     }
     else
     {
@@ -2633,6 +2716,7 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass2(SerialiserType &ser, VkCommandBu
       AddImplicitResolveResourceUsage();
 
       // track while reading, for fetching the right set of outputs in AddAction
+      m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass++;
       m_BakedCmdBufferInfo[m_LastCmdBufferID].state.subpass++;
 
       rdcarray<VkImageMemoryBarrier> imgBarriers = GetImplicitRenderPassBarriers();
@@ -2717,7 +2801,8 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass2(SerialiserType &ser, VkCommand
 
         if(ShouldUpdateRenderState(m_LastCmdBufferID, true))
         {
-          m_Partial[Primary].renderPassActive = false;
+          m_Partial[Primary].renderPassActive =
+              m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = false;
         }
 
         rdcarray<ResourceId> attachments;
@@ -2767,6 +2852,29 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass2(SerialiserType &ser, VkCommand
         GetResourceManager()->RecordBarriers(m_BakedCmdBufferInfo[m_LastCmdBufferID].imageStates,
                                              FindCommandQueueFamily(m_LastCmdBufferID),
                                              (uint32_t)imgBarriers.size(), imgBarriers.data());
+      }
+      else if(IsRenderpassOpen(m_LastCmdBufferID))
+      {
+        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
+        ObjDisp(commandBuffer)->CmdEndRenderPass2(Unwrap(commandBuffer), &unwrappedEndInfo);
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = false;
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].endBarriers.append(GetImplicitRenderPassBarriers(~0U));
+
+        VkSubpassFragmentDensityMapOffsetEndInfoQCOM *fragmentDensityOffsetStruct =
+            (VkSubpassFragmentDensityMapOffsetEndInfoQCOM *)FindNextStruct(
+                &unwrappedEndInfo,
+                VK_STRUCTURE_TYPE_SUBPASS_FRAGMENT_DENSITY_MAP_OFFSET_END_INFO_QCOM);
+
+        if(fragmentDensityOffsetStruct)
+        {
+          rdcarray<VkOffset2D> &stateOffsets = GetCmdRenderState().fragmentDensityMapOffsets;
+          stateOffsets.resize(fragmentDensityOffsetStruct->fragmentDensityOffsetCount);
+          for(uint32_t i = 0; i < fragmentDensityOffsetStruct->fragmentDensityOffsetCount; i++)
+          {
+            stateOffsets[i] = fragmentDensityOffsetStruct->pFragmentDensityOffsets[i];
+          }
+        }
       }
     }
     else
@@ -2938,6 +3046,12 @@ bool WrappedVulkan::Serialise_vkCmdBindPipeline(SerialiserType &ser, VkCommandBu
             if(!pipeInfo.dynamicStates[VkDynamicDiscardRectangleEXT])
             {
               renderstate.discardRectangles = pipeInfo.discardRectangles;
+            }
+            if(!pipeInfo.dynamicStates[VkDynamicShadingRateKHR])
+            {
+              renderstate.pipelineShadingRate = pipeInfo.shadingRate;
+              renderstate.shadingRateCombiners[0] = pipeInfo.shadingRateCombiners[0];
+              renderstate.shadingRateCombiners[1] = pipeInfo.shadingRateCombiners[1];
             }
             if(!pipeInfo.dynamicStates[VkDynamicLineStippleEXT])
             {
@@ -3157,6 +3271,11 @@ bool WrappedVulkan::Serialise_vkCmdBindDescriptorSets(
           if(descsets.size() < firstSet + setCount)
             descsets.resize(firstSet + setCount);
 
+          if(pipelineBindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS)
+            renderstate.graphics.lastBoundSet = firstSet;
+          else
+            renderstate.compute.lastBoundSet = firstSet;
+
           const rdcarray<ResourceId> &descSetLayouts =
               m_CreationInfo.m_PipelineLayout[GetResID(layout)].descSetLayouts;
 
@@ -3168,6 +3287,11 @@ bool WrappedVulkan::Serialise_vkCmdBindDescriptorSets(
           {
             descsets[firstSet + i].pipeLayout = GetResID(layout);
             descsets[firstSet + i].descSet = GetResID(pDescriptorSets[i]);
+            descsets[firstSet + i].offsets.clear();
+
+            if(descSetLayouts[firstSet + i] == ResourceId())
+              continue;
+
             uint32_t dynCount =
                 m_CreationInfo.m_DescSetLayout[descSetLayouts[firstSet + i]].dynamicCount;
             descsets[firstSet + i].offsets.assign(offsIter, dynCount);
@@ -3231,8 +3355,11 @@ void WrappedVulkan::vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer,
     record->AddChunk(scope.Get(&record->cmdInfo->alloc));
     record->MarkResourceFrameReferenced(GetResID(layout), eFrameRef_Read);
     for(uint32_t i = 0; i < setCount; i++)
-      record->cmdInfo->boundDescSets.insert(
-          {GetResID(pDescriptorSets[i]), GetRecord(pDescriptorSets[i])});
+    {
+      if(pDescriptorSets[i] != VK_NULL_HANDLE)
+        record->cmdInfo->boundDescSets.insert(
+            {GetResID(pDescriptorSets[i]), GetRecord(pDescriptorSets[i])});
+    }
   }
 }
 
@@ -3524,72 +3651,6 @@ void WrappedVulkan::vkCmdBindIndexBuffer(VkCommandBuffer commandBuffer, VkBuffer
 }
 
 template <typename SerialiserType>
-bool WrappedVulkan::Serialise_vkCmdUpdateBuffer(SerialiserType &ser, VkCommandBuffer commandBuffer,
-                                                VkBuffer destBuffer, VkDeviceSize destOffset,
-                                                VkDeviceSize dataSize, const uint32_t *pData)
-{
-  SERIALISE_ELEMENT(commandBuffer);
-  SERIALISE_ELEMENT(destBuffer).Important();
-  SERIALISE_ELEMENT(destOffset);
-  SERIALISE_ELEMENT(dataSize);
-
-  // serialise as void* so it goes through as a buffer, not an actual array of integers.
-  const void *Data = (const void *)pData;
-  SERIALISE_ELEMENT_ARRAY(Data, dataSize).Important();
-
-  Serialise_DebugMessages(ser);
-
-  SERIALISE_CHECK_READ_ERRORS();
-
-  if(IsReplayingAndReading())
-  {
-    m_LastCmdBufferID = GetResourceManager()->GetOriginalID(GetResID(commandBuffer));
-
-    if(IsActiveReplaying(m_State))
-    {
-      if(InRerecordRange(m_LastCmdBufferID))
-        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
-      else
-        commandBuffer = VK_NULL_HANDLE;
-    }
-
-    if(commandBuffer != VK_NULL_HANDLE)
-    {
-      ObjDisp(commandBuffer)
-          ->CmdUpdateBuffer(Unwrap(commandBuffer), Unwrap(destBuffer), destOffset, dataSize, Data);
-    }
-  }
-
-  return true;
-}
-
-void WrappedVulkan::vkCmdUpdateBuffer(VkCommandBuffer commandBuffer, VkBuffer destBuffer,
-                                      VkDeviceSize destOffset, VkDeviceSize dataSize,
-                                      const uint32_t *pData)
-{
-  SCOPED_DBG_SINK();
-
-  SERIALISE_TIME_CALL(ObjDisp(commandBuffer)
-                          ->CmdUpdateBuffer(Unwrap(commandBuffer), Unwrap(destBuffer), destOffset,
-                                            dataSize, pData));
-
-  if(IsCaptureMode(m_State))
-  {
-    VkResourceRecord *record = GetRecord(commandBuffer);
-
-    CACHE_THREAD_SERIALISER();
-
-    SCOPED_SERIALISE_CHUNK(VulkanChunk::vkCmdUpdateBuffer);
-    Serialise_vkCmdUpdateBuffer(ser, commandBuffer, destBuffer, destOffset, dataSize, pData);
-
-    record->AddChunk(scope.Get(&record->cmdInfo->alloc));
-
-    record->MarkBufferFrameReferenced(GetRecord(destBuffer), destOffset, dataSize,
-                                      eFrameRef_CompleteWrite);
-  }
-}
-
-template <typename SerialiserType>
 bool WrappedVulkan::Serialise_vkCmdPushConstants(SerialiserType &ser, VkCommandBuffer commandBuffer,
                                                  VkPipelineLayout layout,
                                                  VkShaderStageFlags stageFlags, uint32_t start,
@@ -3628,6 +3689,7 @@ bool WrappedVulkan::Serialise_vkCmdPushConstants(SerialiserType &ser, VkCommandB
           memcpy(renderstate.pushconsts + start, values, length);
 
           renderstate.pushConstSize = RDCMAX(renderstate.pushConstSize, start + length);
+          renderstate.pushLayout = GetResID(layout);
         }
       }
     }
@@ -3777,17 +3839,7 @@ bool WrappedVulkan::Serialise_vkCmdPipelineBarrier(
       // now sanitise layouts before passing to vulkan
       for(VkImageMemoryBarrier &barrier : imgBarriers)
       {
-        if(!IsLoading(m_State) && barrier.oldLayout == VK_IMAGE_LAYOUT_PREINITIALIZED)
-        {
-          // This is a transition from PRENITIALIZED, but we've already done this barrier once (when
-          // loading); Since we couldn't transition back to PREINITIALIZED, we instead left the
-          // image in GENERAL.
-          barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        }
-        else
-        {
-          SanitiseReplayImageLayout(barrier.oldLayout);
-        }
+        SanitiseOldImageLayout(barrier.oldLayout);
         SanitiseReplayImageLayout(barrier.newLayout);
       }
 
@@ -4043,17 +4095,7 @@ bool WrappedVulkan::Serialise_vkCmdPipelineBarrier2(SerialiserType &ser,
           continue;
         }
 
-        if(!IsLoading(m_State) && barrier.oldLayout == VK_IMAGE_LAYOUT_PREINITIALIZED)
-        {
-          // This is a transition from PRENITIALIZED, but we've already done this barrier once (when
-          // loading); Since we couldn't transition back to PREINITIALIZED, we instead left the
-          // image in GENERAL.
-          barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        }
-        else
-        {
-          SanitiseReplayImageLayout(barrier.oldLayout);
-        }
+        SanitiseOldImageLayout(barrier.oldLayout);
         SanitiseReplayImageLayout(barrier.newLayout);
       }
 
@@ -4492,6 +4534,7 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(SerialiserType &ser, VkComman
         parentCmdBufInfo.curEventID++;
 
         if(m_BakedCmdBufferInfo[m_LastCmdBufferID].state.GetRenderPass() == ResourceId() &&
+           !m_BakedCmdBufferInfo[m_LastCmdBufferID].state.dynamicRendering.active &&
            (cmdBufInfo.beginFlags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT))
         {
           AddDebugMessage(
@@ -4607,6 +4650,7 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(SerialiserType &ser, VkComman
           // propagate renderpass state
           m_BakedCmdBufferInfo[cmd].state.SetRenderPass(parentCmdBufInfo.state.GetRenderPass());
           m_BakedCmdBufferInfo[cmd].state.subpass = parentCmdBufInfo.state.subpass;
+          m_BakedCmdBufferInfo[cmd].state.dynamicRendering = parentCmdBufInfo.state.dynamicRendering;
           m_BakedCmdBufferInfo[cmd].state.SetFramebuffer(
               parentCmdBufInfo.state.GetFramebuffer(),
               parentCmdBufInfo.state.GetFramebufferAttachments());
@@ -5137,6 +5181,11 @@ bool WrappedVulkan::Serialise_vkCmdPushDescriptorSetKHR(SerialiserType &ser,
           if(descsets.size() < set + 1)
             descsets.resize(set + 1);
 
+          if(pipelineBindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS)
+            renderstate.graphics.lastBoundSet = set;
+          else
+            renderstate.compute.lastBoundSet = set;
+
           descsets[set].pipeLayout = GetResID(layout);
           descsets[set].descSet = setId;
         }
@@ -5420,6 +5469,11 @@ bool WrappedVulkan::Serialise_vkCmdPushDescriptorSetWithTemplateKHR(
           // expand as necessary
           if(descsets.size() < set + 1)
             descsets.resize(set + 1);
+
+          if(bindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS)
+            renderstate.graphics.lastBoundSet = set;
+          else
+            renderstate.compute.lastBoundSet = set;
 
           descsets[set].pipeLayout = GetResID(layout);
           descsets[set].descSet = setId;
@@ -6652,7 +6706,7 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
   {
     m_LastCmdBufferID = GetResourceManager()->GetOriginalID(GetResID(commandBuffer));
 
-    byte *tempMem = GetTempMemory(GetNextPatchSize(pRenderingInfo));
+    byte *tempMem = GetTempMemory(GetNextPatchSize(&RenderingInfo));
     VkRenderingInfo *unwrappedInfo = UnwrapStructAndChain(m_State, tempMem, &RenderingInfo);
 
     if(IsActiveReplaying(m_State))
@@ -6665,7 +6719,9 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
         if(ShouldUpdateRenderState(m_LastCmdBufferID, true))
         {
           m_Partial[Primary].renderPassActive = true;
+          m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = true;
         }
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].activeSubpass = 0;
 
         VulkanRenderState &renderstate = GetCmdRenderState();
 
@@ -6696,6 +6752,19 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
             renderstate.dynamicRendering.fragmentDensityView = fragmentDensityAttachment->imageView;
             renderstate.dynamicRendering.fragmentDensityLayout =
                 fragmentDensityAttachment->imageLayout;
+          }
+
+          VkRenderingFragmentShadingRateAttachmentInfoKHR *shadingRateAttachment =
+              (VkRenderingFragmentShadingRateAttachmentInfoKHR *)FindNextStruct(
+                  &RenderingInfo,
+                  VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR);
+
+          if(shadingRateAttachment)
+          {
+            renderstate.dynamicRendering.shadingRateView = shadingRateAttachment->imageView;
+            renderstate.dynamicRendering.shadingRateLayout = shadingRateAttachment->imageLayout;
+            renderstate.dynamicRendering.shadingRateTexelSize =
+                shadingRateAttachment->shadingRateAttachmentTexelSize;
           }
 
           rdcarray<ResourceId> attachments;
@@ -6829,6 +6898,19 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
         {
           renderstate.dynamicRendering.fragmentDensityView = fragmentDensityAttachment->imageView;
           renderstate.dynamicRendering.fragmentDensityLayout = fragmentDensityAttachment->imageLayout;
+        }
+
+        VkRenderingFragmentShadingRateAttachmentInfoKHR *shadingRateAttachment =
+            (VkRenderingFragmentShadingRateAttachmentInfoKHR *)FindNextStruct(
+                &RenderingInfo,
+                VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR);
+
+        if(shadingRateAttachment)
+        {
+          renderstate.dynamicRendering.shadingRateView = shadingRateAttachment->imageView;
+          renderstate.dynamicRendering.shadingRateLayout = shadingRateAttachment->imageLayout;
+          renderstate.dynamicRendering.shadingRateTexelSize =
+              shadingRateAttachment->shadingRateAttachmentTexelSize;
         }
 
         rdcarray<ResourceId> attachments;
@@ -6978,6 +7060,8 @@ bool WrappedVulkan::Serialise_vkCmdEndRendering(SerialiserType &ser, VkCommandBu
 
         if(ShouldUpdateRenderState(m_LastCmdBufferID, true))
         {
+          m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = false;
+
           // if this rendering is just being suspended, the pass is still active
           if(!suspending)
             m_Partial[Primary].renderPassActive = false;
@@ -7055,6 +7139,13 @@ bool WrappedVulkan::Serialise_vkCmdEndRendering(SerialiserType &ser, VkCommandBu
           renderstate.dynamicRendering = VulkanRenderState::DynamicRendering();
           renderstate.SetFramebuffer(ResourceId(), rdcarray<ResourceId>());
         }
+      }
+      else if(IsRenderpassOpen(m_LastCmdBufferID))
+      {
+        commandBuffer = RerecordCmdBuf(m_LastCmdBufferID);
+        ObjDisp(commandBuffer)->CmdEndRendering(Unwrap(commandBuffer));
+
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].renderPassOpen = false;
       }
     }
     else
@@ -7194,10 +7285,6 @@ INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdBindIndexBuffer, VkCommandBuffer comm
 INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdBindVertexBuffers, VkCommandBuffer commandBuffer,
                                 uint32_t firstBinding, uint32_t bindingCount,
                                 const VkBuffer *pBuffers, const VkDeviceSize *pOffsets);
-
-INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdUpdateBuffer, VkCommandBuffer commandBuffer,
-                                VkBuffer dstBuffer, VkDeviceSize dstOffset, VkDeviceSize dataSize,
-                                const uint32_t *pData);
 
 INSTANTIATE_FUNCTION_SERIALISED(void, vkCmdPushConstants, VkCommandBuffer commandBuffer,
                                 VkPipelineLayout layout, VkShaderStageFlags stageFlags,

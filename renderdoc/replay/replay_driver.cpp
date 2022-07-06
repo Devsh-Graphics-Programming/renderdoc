@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@
 #include "maths/formatpacking.h"
 #include "maths/half_convert.h"
 #include "serialise/serialiser.h"
+#include "strings/string_utils.h"
 
 template <>
 rdcstr DoStringise(const RemapTexture &el)
@@ -340,7 +341,7 @@ void PatchTriangleFanRestartIndexBufer(rdcarray<uint32_t> &patchedIndices, uint3
   newIndices.swap(patchedIndices);
 }
 
-void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescriptor &desc,
+void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantType &desc,
                                  uint32_t dataOffset, const bytebuf &data, ShaderVariable &outvar,
                                  uint32_t matStride)
 {
@@ -361,7 +362,7 @@ void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescript
   // so a matrix is a secondaryDim number of primaryDim-sized vectors
   uint32_t primaryDim = cols;
   uint32_t secondaryDim = rows;
-  if(rows > 1 && !outvar.rowMajor)
+  if(rows > 1 && outvar.ColMajor())
   {
     primaryDim = rows;
     secondaryDim = cols;
@@ -373,7 +374,6 @@ void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescript
     const size_t avail = data.size() - dataOffset;
 
     byte *dstData = outvar.value.u8v.data();
-    const size_t dstStride = elemByteSize == 8 ? 8 : 4;
 
     // each secondaryDim element (row or column) is stored in a primaryDim-vector.
     // We copy each vector member individually to account for smaller than uint32 sized types.
@@ -382,7 +382,7 @@ void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescript
       for(uint32_t p = 0; p < primaryDim; p++)
       {
         const size_t srcOffset = matStride * s + p * elemByteSize;
-        const size_t dstOffset = (primaryDim * s + p) * dstStride;
+        const size_t dstOffset = (primaryDim * s + p) * elemByteSize;
 
         if(srcOffset + elemByteSize <= avail)
           memcpy(dstData + dstOffset, srcData + srcOffset, elemByteSize);
@@ -390,7 +390,7 @@ void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescript
     }
 
     // if it's a matrix and not row major, transpose
-    if(primaryDim > 1 && secondaryDim > 1 && !outvar.rowMajor)
+    if(primaryDim > 1 && secondaryDim > 1 && outvar.ColMajor())
     {
       ShaderVariable tmp = outvar;
 
@@ -400,40 +400,23 @@ void StandardFillCBufferVariable(ResourceId shader, const ShaderConstantDescript
           for(size_t ci = 0; ci < cols; ci++)
             outvar.value.u64v[ri * cols + ci] = tmp.value.u64v[ci * rows + ri];
       }
-      else
+      else if(elemByteSize == 4)
       {
         for(size_t ri = 0; ri < rows; ri++)
           for(size_t ci = 0; ci < cols; ci++)
             outvar.value.u32v[ri * cols + ci] = tmp.value.u32v[ci * rows + ri];
       }
-    }
-
-    // special case - decode halfs in-place, sign extend signed < 4 byte integers
-    if(type == VarType::Half)
-    {
-      for(size_t ri = 0; ri < rows; ri++)
+      else if(elemByteSize == 2)
       {
-        for(size_t ci = 0; ci < cols; ci++)
-        {
-          outvar.value.f32v[ri * cols + ci] =
-              ConvertFromHalf((uint16_t)outvar.value.u32v[ri * cols + ci]);
-        }
+        for(size_t ri = 0; ri < rows; ri++)
+          for(size_t ci = 0; ci < cols; ci++)
+            outvar.value.u16v[ri * cols + ci] = tmp.value.u16v[ci * rows + ri];
       }
-    }
-    else if(type == VarType::SShort || type == VarType::SByte)
-    {
-      const uint32_t testMask = (type == VarType::SShort ? 0x8000 : 0x80);
-      const uint32_t extendMask = (type == VarType::SShort ? 0xffff0000 : 0xffffff00);
-
-      for(size_t ri = 0; ri < rows; ri++)
+      else if(elemByteSize == 1)
       {
-        for(size_t ci = 0; ci < cols; ci++)
-        {
-          uint32_t &u = outvar.value.u32v[ri * cols + ci];
-
-          if(u & testMask)
-            u |= extendMask;
-        }
+        for(size_t ri = 0; ri < rows; ri++)
+          for(size_t ci = 0; ci < cols; ci++)
+            outvar.value.u8v[ri * cols + ci] = tmp.value.u8v[ci * rows + ri];
       }
     }
   }
@@ -450,13 +433,13 @@ static void StandardFillCBufferVariables(ResourceId shader, const rdcarray<Shade
   {
     rdcstr basename = invars[v].name;
 
-    uint8_t rows = invars[v].type.descriptor.rows;
-    uint8_t cols = invars[v].type.descriptor.columns;
-    uint32_t elems = RDCMAX(1U, invars[v].type.descriptor.elements);
-    const bool rowMajor = invars[v].type.descriptor.rowMajorStorage != 0;
+    uint8_t rows = invars[v].type.rows;
+    uint8_t cols = invars[v].type.columns;
+    uint32_t elems = RDCMAX(1U, invars[v].type.elements);
+    const bool rowMajor = invars[v].type.RowMajor();
     const bool isArray = elems > 1;
 
-    const uint32_t matStride = invars[v].type.descriptor.matrixByteStride;
+    const uint32_t matStride = invars[v].type.matrixByteStride;
 
     uint32_t dataOffset = baseOffset + invars[v].byteOffset;
 
@@ -465,8 +448,9 @@ static void StandardFillCBufferVariables(ResourceId shader, const rdcarray<Shade
       ShaderVariable var;
       var.name = basename;
       var.rows = var.columns = 0;
-      var.type = VarType::Float;
-      var.rowMajor = rowMajor;
+      var.type = VarType::Struct;
+      if(rowMajor)
+        var.flags |= ShaderVariableFlags::RowMajorMatrix;
 
       rdcarray<ShaderVariable> varmembers;
 
@@ -478,21 +462,18 @@ static void StandardFillCBufferVariables(ResourceId shader, const rdcarray<Shade
           ShaderVariable &vr = var.members[i];
           vr.name = StringFormat::Fmt("%s[%u]", basename.c_str(), i);
           vr.rows = vr.columns = 0;
-          vr.type = VarType::Float;
-          vr.rowMajor = rowMajor;
+          vr.type = VarType::Struct;
+          if(rowMajor)
+            vr.flags |= ShaderVariableFlags::RowMajorMatrix;
 
           StandardFillCBufferVariables(shader, invars[v].type.members, vr.members, data, dataOffset);
 
-          dataOffset += invars[v].type.descriptor.arrayByteStride;
-
-          vr.isStruct = true;
+          dataOffset += invars[v].type.arrayByteStride;
         }
-
-        var.isStruct = false;
       }
       else
       {
-        var.isStruct = true;
+        var.type = VarType::Struct;
 
         StandardFillCBufferVariables(shader, invars[v].type.members, var.members, data, dataOffset);
       }
@@ -506,14 +487,14 @@ static void StandardFillCBufferVariables(ResourceId shader, const rdcarray<Shade
     outvars.push_back({});
 
     {
-      const VarType type = invars[v].type.descriptor.type;
+      const VarType type = invars[v].type.baseType;
 
       outvars[outIdx].name = basename;
       outvars[outIdx].rows = 1;
       outvars[outIdx].type = type;
-      outvars[outIdx].isStruct = false;
       outvars[outIdx].columns = cols;
-      outvars[outIdx].rowMajor = rowMajor;
+      if(rowMajor)
+        outvars[outIdx].flags |= ShaderVariableFlags::RowMajorMatrix;
 
       ShaderVariable &var = outvars[outIdx];
 
@@ -521,8 +502,8 @@ static void StandardFillCBufferVariables(ResourceId shader, const rdcarray<Shade
       {
         outvars[outIdx].rows = rows;
 
-        StandardFillCBufferVariable(shader, invars[v].type.descriptor, dataOffset, data,
-                                    outvars[outIdx], matStride);
+        StandardFillCBufferVariable(shader, invars[v].type, dataOffset, data, outvars[outIdx],
+                                    matStride);
       }
       else
       {
@@ -540,23 +521,242 @@ static void StandardFillCBufferVariables(ResourceId shader, const rdcarray<Shade
           varmembers[e].name = StringFormat::Fmt("%s[%u]", base.c_str(), e);
           varmembers[e].rows = rows;
           varmembers[e].type = type;
-          varmembers[e].isStruct = false;
           varmembers[e].columns = cols;
-          varmembers[e].rowMajor = rowMajor;
+          if(rowMajor)
+            varmembers[e].flags |= ShaderVariableFlags::RowMajorMatrix;
 
           uint32_t rowDataOffset = dataOffset;
 
-          dataOffset += invars[v].type.descriptor.arrayByteStride;
+          dataOffset += invars[v].type.arrayByteStride;
 
-          StandardFillCBufferVariable(shader, invars[v].type.descriptor, rowDataOffset, data,
-                                      varmembers[e], matStride);
+          StandardFillCBufferVariable(shader, invars[v].type, rowDataOffset, data, varmembers[e],
+                                      matStride);
         }
 
+        var.members = varmembers;
+      }
+    }
+  }
+}
+
+void PreprocessLineDirectives(rdcarray<ShaderSourceFile> &sourceFiles)
+{
+  struct SplitFile
+  {
+    rdcstr filename;
+    rdcarray<rdcstr> lines;
+    bool modified = false;
+  };
+
+  rdcarray<SplitFile> splitFiles;
+
+  splitFiles.resize(sourceFiles.size());
+
+  for(size_t i = 0; i < sourceFiles.size(); i++)
+    splitFiles[i].filename = sourceFiles[i].filename;
+
+  for(size_t i = 0; i < sourceFiles.size(); i++)
+  {
+    rdcarray<rdcstr> srclines;
+
+    // start off writing to the corresponding output file.
+    SplitFile *dstFile = &splitFiles[i];
+    bool changedFile = false;
+
+    size_t dstLine = 0;
+
+    // skip this file if it doesn't contain #line
+    if(!sourceFiles[i].contents.contains("#line"))
+      continue;
+
+    split(sourceFiles[i].contents, srclines, '\n');
+    srclines.push_back("");
+
+    // handle #line directives by inserting empty lines or erasing as necessary
+    bool seenLine = false;
+
+    for(size_t srcLine = 0; srcLine < srclines.size(); srcLine++)
+    {
+      if(srclines[srcLine].empty())
+      {
+        dstLine++;
+        continue;
+      }
+
+      char *c = &srclines[srcLine][0];
+      char *end = c + srclines[srcLine].size();
+
+      while(*c == '\t' || *c == ' ' || *c == '\r')
+        c++;
+
+      if(c == end)
+      {
+        // blank line, just advance line counter
+        dstLine++;
+        continue;
+      }
+
+      if(c + 5 > end || strncmp(c, "#line", 5) != 0)
+      {
+        // only actually insert the line if we've seen a #line statement. Otherwise we're just
+        // doing an identity copy. This can lead to problems e.g. if there are a few statements in
+        // a file before the #line we then create a truncated list of lines with only those and
+        // then start spitting the #line directives into other files. We still want to have the
+        // original file as-is.
+        if(seenLine)
         {
-          var.isStruct = false;
-          var.members = varmembers;
+          // resize up to account for the current line, if necessary
+          dstFile->lines.resize(RDCMAX(dstLine + 1, dstFile->lines.size()));
+
+          // if non-empty, append this line (to allow multiple lines on the same line
+          // number to be concatenated). To avoid screwing up line numbers we have to append with
+          // a comment and not a newline.
+          if(dstFile->lines[dstLine].empty())
+            dstFile->lines[dstLine] = srclines[srcLine];
+          else
+            dstFile->lines[dstLine] += " /* multiple #lines overlapping */ " + srclines[srcLine];
+
+          dstFile->modified = true;
+        }
+
+        // advance line counter
+        dstLine++;
+
+        continue;
+      }
+
+      seenLine = true;
+
+      // we have a #line directive
+      c += 5;
+
+      if(c >= end)
+      {
+        // invalid #line, just advance line counter
+        dstLine++;
+        continue;
+      }
+
+      while(*c == '\t' || *c == ' ')
+        c++;
+
+      if(c >= end)
+      {
+        // invalid #line, just advance line counter
+        dstLine++;
+        continue;
+      }
+
+      // invalid #line, no line number. Skip/ignore and just advance line counter
+      if(*c < '0' || *c > '9')
+      {
+        dstLine++;
+        continue;
+      }
+
+      size_t newLineNum = 0;
+      while(*c >= '0' && *c <= '9')
+      {
+        newLineNum *= 10;
+        newLineNum += int((*c) - '0');
+        c++;
+      }
+
+      // convert to 0-indexed line number
+      if(newLineNum > 0)
+        newLineNum--;
+
+      while(*c == '\t' || *c == ' ')
+        c++;
+
+      if(*c == '"')
+      {
+        // filename
+        c++;
+
+        char *filename = c;
+
+        // parse out filename
+        while(*c != '"' && *c != 0)
+        {
+          if(*c == '\\')
+          {
+            // skip escaped characters
+            c += 2;
+          }
+          else
+          {
+            c++;
+          }
+        }
+
+        // parsed filename successfully
+        if(*c == '"')
+        {
+          *c = 0;
+
+          rdcstr fname = filename;
+          if(fname.empty())
+            fname = "shader";
+
+          // find the new destination file
+          bool found = false;
+          size_t dstFileIdx = 0;
+
+          for(size_t f = 0; f < splitFiles.size(); f++)
+          {
+            if(splitFiles[f].filename == fname)
+            {
+              found = true;
+              dstFileIdx = f;
+              break;
+            }
+          }
+
+          if(found)
+          {
+            changedFile = (dstFile != &splitFiles[dstFileIdx]);
+            dstFile = &splitFiles[dstFileIdx];
+          }
+          else
+          {
+            RDCWARN("Couldn't find filename '%s' in #line directive in debug info", fname.c_str());
+
+            // make a dummy file to write into that won't be used.
+            splitFiles.push_back(SplitFile());
+            splitFiles.back().filename = fname;
+            splitFiles.back().modified = true;
+
+            changedFile = true;
+            dstFile = &splitFiles.back();
+          }
+
+          // set the next line number, and continue processing
+          dstLine = newLineNum;
+
+          continue;
+        }
+        else
+        {
+          // invalid #line, ignore
+          RDCERR("Couldn't parse #line directive: '%s'", srclines[srcLine].c_str());
+          continue;
         }
       }
+      else
+      {
+        // No filename. Set the next line number, and continue processing
+        dstLine = newLineNum;
+        continue;
+      }
+    }
+  }
+
+  for(size_t i = 0; i < sourceFiles.size(); i++)
+  {
+    if(sourceFiles[i].contents.empty() || splitFiles[i].modified)
+    {
+      merge(splitFiles[i].lines, sourceFiles[i].contents, '\n');
     }
   }
 }

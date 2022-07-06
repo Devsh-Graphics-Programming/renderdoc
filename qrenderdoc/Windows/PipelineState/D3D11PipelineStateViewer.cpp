@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -796,10 +796,10 @@ void D3D11PipelineStateViewer::addResourceRow(const D3D11ViewTag &view,
       {
         if(r.viewFormat.compType == CompType::Typeless)
         {
-          if(!shaderInput->variableType.members.empty())
-            format = lit("struct ") + shaderInput->variableType.descriptor.name;
+          if(shaderInput->variableType.baseType == VarType::Struct)
+            format = lit("struct ") + shaderInput->variableType.name;
           else
-            format = shaderInput->variableType.descriptor.name;
+            format = shaderInput->variableType.name;
         }
         else
         {
@@ -2118,8 +2118,6 @@ void D3D11PipelineStateViewer::resource_itemActivated(RDTreeWidgetItem *item, in
       const D3D11Pipe::Shader *nonCS[] = {&state.vertexShader, &state.domainShader, &state.hullShader,
                                           &state.geometryShader, &state.pixelShader};
 
-      bind += state.outputMerger.uavStartSlot;
-
       for(const D3D11Pipe::Shader *searchstage : nonCS)
       {
         if(searchstage->reflection)
@@ -2159,7 +2157,8 @@ void D3D11PipelineStateViewer::resource_itemActivated(RDTreeWidgetItem *item, in
 
     if(shaderRes)
     {
-      format = BufferFormatter::GetBufferFormatString(*shaderRes, view.res.viewFormat, offs);
+      format =
+          BufferFormatter::GetBufferFormatString(Packing::D3DUAV, *shaderRes, view.res.viewFormat);
 
       if(view.res.bufferFlags & D3DBufferViewFlags::Raw)
         format = lit("xint");
@@ -2211,7 +2210,7 @@ void D3D11PipelineStateViewer::cbuffer_itemActivated(RDTreeWidgetItem *item, int
     return;
   }
 
-  IConstantBufferPreviewer *prev = m_Ctx.ViewConstantBuffer(stage->stage, cbufIdx, 0);
+  IBufferViewer *prev = m_Ctx.ViewConstantBuffer(stage->stage, cbufIdx, 0);
 
   m_Ctx.AddDockWindow(prev->Widget(), DockReference::TransientPopupArea, this, 0.3f);
 }
@@ -2499,10 +2498,10 @@ QVariantList D3D11PipelineStateViewer::exportViewHTML(const D3D11Pipe::View &vie
     {
       if(view.viewFormat.compType == CompType::Typeless)
       {
-        if(!shaderInput->variableType.members.isEmpty())
-          viewFormat = format = lit("struct ") + shaderInput->variableType.descriptor.name;
+        if(shaderInput->variableType.baseType == VarType::Struct)
+          viewFormat = format = lit("struct ") + shaderInput->variableType.name;
         else
-          viewFormat = format = shaderInput->variableType.descriptor.name;
+          viewFormat = format = shaderInput->variableType.name;
       }
       else
       {

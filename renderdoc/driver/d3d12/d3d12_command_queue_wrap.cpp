@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -582,6 +582,7 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(SerialiserType &se
         // only primary command lists can be submitted
         m_Cmd.m_Partial[D3D12CommandData::Primary].cmdListExecs[cmd].push_back(m_Cmd.m_RootEventID);
 
+        // pull in any remaining events on the command buffer that weren't added to an action
         for(size_t e = 0; e < cmdListInfo.curEvents.size(); e++)
         {
           APIEvent apievent = cmdListInfo.curEvents[e];
@@ -594,6 +595,13 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(SerialiserType &se
 
         m_Cmd.m_RootEventID += cmdListInfo.eventCount;
         m_Cmd.m_RootActionID += cmdListInfo.actionCount;
+
+        for(auto it = cmdListInfo.resourceUsage.begin(); it != cmdListInfo.resourceUsage.end(); ++it)
+        {
+          EventUsage u = it->second;
+          u.eventId += m_Cmd.m_RootEventID - cmdListInfo.curEvents.count();
+          m_Cmd.m_ResourceUses[it->first].push_back(u);
+        }
 
         {
           action.customName =
@@ -1034,13 +1042,18 @@ bool WrappedID3D12CommandQueue::Serialise_SetMarker(SerialiserType &ser, UINT Me
                                                     const void *pData, UINT Size)
 {
   rdcstr MarkerText = "";
+  uint64_t Color = 0;
 
   if(ser.IsWriting() && pData && Size)
-    MarkerText = DecodeMarkerString(Metadata, pData, Size);
+    MarkerText = DecodeMarkerString(Metadata, pData, Size, Color);
 
   ID3D12CommandQueue *pQueue = this;
   SERIALISE_ELEMENT(pQueue);
-  SERIALISE_ELEMENT(MarkerText);
+  SERIALISE_ELEMENT(MarkerText).Important();
+  if(ser.VersionAtLeast(0xD))
+  {
+    SERIALISE_ELEMENT(Color);
+  }
 
   SERIALISE_CHECK_READ_ERRORS();
 
@@ -1052,6 +1065,10 @@ bool WrappedID3D12CommandQueue::Serialise_SetMarker(SerialiserType &ser, UINT Me
     {
       ActionDescription action;
       action.customName = MarkerText;
+      if(Color != 0)
+      {
+        action.markerColor = DecodePIXColor(Color);
+      }
       action.flags |= ActionFlags::SetMarker;
 
       m_Cmd.AddEvent();
@@ -1083,13 +1100,18 @@ bool WrappedID3D12CommandQueue::Serialise_BeginEvent(SerialiserType &ser, UINT M
                                                      const void *pData, UINT Size)
 {
   rdcstr MarkerText = "";
+  uint64_t Color = 0;
 
   if(ser.IsWriting() && pData && Size)
-    MarkerText = DecodeMarkerString(Metadata, pData, Size);
+    MarkerText = DecodeMarkerString(Metadata, pData, Size, Color);
 
   ID3D12CommandQueue *pQueue = this;
   SERIALISE_ELEMENT(pQueue);
   SERIALISE_ELEMENT(MarkerText).Important();
+  if(ser.VersionAtLeast(0xD))
+  {
+    SERIALISE_ELEMENT(Color);
+  }
 
   SERIALISE_CHECK_READ_ERRORS();
 
@@ -1101,6 +1123,10 @@ bool WrappedID3D12CommandQueue::Serialise_BeginEvent(SerialiserType &ser, UINT M
     {
       ActionDescription action;
       action.customName = MarkerText;
+      if(Color != 0)
+      {
+        action.markerColor = DecodePIXColor(Color);
+      }
       action.flags |= ActionFlags::PushMarker;
 
       m_Cmd.AddEvent();

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,7 +25,6 @@
 #include "dxil_bytecode.h"
 #include <ctype.h>
 #include <stdio.h>
-#include <string>
 #include "common/common.h"
 #include "common/formatting.h"
 #include "os/os_specific.h"
@@ -484,13 +483,6 @@ Program::Program(const byte *bytes, size_t length)
         for(size_t p = 6; p < rootchild.ops.size(); p++)
           RDCASSERT(rootchild.ops[p] == 0, p, rootchild.ops[p]);
 
-        const Type *ptrType = GetPointerType(f.funcType, Type::PointerAddrSpace::Default);
-
-        if(ptrType == f.funcType)
-          RDCERR("Expected to find pointer type for function");
-
-        f.funcType = ptrType;
-
         if(!f.external)
           functionDecls.push_back(m_Functions.size());
 
@@ -754,6 +746,7 @@ Program::Program(const byte *bytes, size_t length)
           {
             // pretend opaque types are empty structs
             m_Types[typeIndex].type = Type::Struct;
+            m_Types[typeIndex].opaque = true;
 
             typeIndex++;
           }
@@ -981,11 +974,11 @@ Program::Program(const byte *bytes, size_t length)
         size_t prevNumSymbols = m_Values.size();
         size_t instrSymbolStart = 0;
 
-        f.args.reserve(f.funcType->inner->members.size());
-        for(size_t i = 0; i < f.funcType->inner->members.size(); i++)
+        f.args.reserve(f.funcType->members.size());
+        for(size_t i = 0; i < f.funcType->members.size(); i++)
         {
           Instruction arg;
-          arg.type = f.funcType->inner->members[i];
+          arg.type = f.funcType->members[i];
           arg.name = StringFormat::Fmt("arg%zu", i);
           f.args.push_back(arg);
           m_Values.push_back(Value(&f.args.back()));
@@ -1276,16 +1269,16 @@ Program::Program(const byte *bytes, size_t length)
               }
 
               inst.funcCall = v.function;
-              inst.type = inst.funcCall->funcType->inner->inner;
+              inst.type = inst.funcCall->funcType->inner;
 
               if(funcCallType)
               {
-                RDCASSERT(funcCallType == inst.funcCall->funcType->inner);
+                RDCASSERT(funcCallType == inst.funcCall->funcType);
               }
 
               for(size_t i = 0; op.remaining() > 0; i++)
               {
-                if(inst.funcCall->funcType->inner->members[i]->type == Type::Metadata)
+                if(inst.funcCall->funcType->members[i]->type == Type::Metadata)
                 {
                   int32_t offs = (int32_t)op.get<uint32_t>();
                   size_t idx = m_Values.size() - offs;
@@ -1301,12 +1294,14 @@ Program::Program(const byte *bytes, size_t length)
                 inst.args.push_back(v);
               }
 
-              RDCASSERTEQUAL(inst.args.size(), inst.funcCall->funcType->inner->members.size());
+              RDCASSERTEQUAL(inst.args.size(), inst.funcCall->funcType->members.size());
 
               f.instructions.push_back(inst);
 
               if(!inst.type->isVoid())
                 m_Values.push_back(Value(&f.instructions.back()));
+              if(inst.funcCall->name == "dx.op.createHandleFromHeap")
+                m_directHeapAccessCount++;
             }
             else if(op.type == FunctionRecord::INST_CAST)
             {

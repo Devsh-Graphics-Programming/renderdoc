@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -220,10 +220,12 @@ void LiveCapture::on_captures_mouseClicked(QMouseEvent *e)
     contextOpenMenu.addAction(&thisAction);
     contextOpenMenu.addAction(&newAction);
 
+    QAction contextRenameAction(tr("&Rename capture"), this);
     QAction contextSaveAction(tr("&Save"), this);
     QAction contextDeleteAction(tr("&Delete"), this);
 
     contextMenu.addAction(contextOpenMenu.menuAction());
+    contextMenu.addAction(&contextRenameAction);
     contextMenu.addAction(&contextSaveAction);
     contextMenu.addAction(&contextDeleteAction);
 
@@ -234,12 +236,15 @@ void LiveCapture::on_captures_mouseClicked(QMouseEvent *e)
     else
     {
       contextOpenMenu.setEnabled(false);
+      contextRenameAction.setEnabled(false);
       contextSaveAction.setText(tr("&Save All"));
       contextDeleteAction.setText(tr("&Delete All"));
     }
 
     QObject::connect(&thisAction, &QAction::triggered, this, &LiveCapture::openCapture_triggered);
     QObject::connect(&newAction, &QAction::triggered, this, &LiveCapture::openNewWindow_triggered);
+    QObject::connect(&contextRenameAction, &QAction::triggered,
+                     [this]() { ui->captures->editItem(ui->captures->selectedItems()[0]); });
     QObject::connect(&contextSaveAction, &QAction::triggered, this,
                      &LiveCapture::saveCapture_triggered);
     QObject::connect(&contextDeleteAction, &QAction::triggered, this,
@@ -685,7 +690,7 @@ QString LiveCapture::MakeText(Capture *cap)
   return text;
 }
 
-bool LiveCapture::checkAllowClose(bool multipleClosures, bool &noToAll)
+bool LiveCapture::checkAllowClose(int totalUnsavedCaptures, bool &noToAll)
 {
   m_IgnoreThreadClosed = true;
 
@@ -693,7 +698,10 @@ bool LiveCapture::checkAllowClose(bool multipleClosures, bool &noToAll)
 
   QMessageBox::StandardButtons msgFlags = RDDialog::YesNoCancel;
 
-  if(ui->captures->count() > 1)
+  const int unsavedCaptures = unsavedCaptureCount();
+  const bool multipleClosures = totalUnsavedCaptures > unsavedCaptures;
+
+  if(unsavedCaptures > 1 || multipleClosures)
     msgFlags |= QMessageBox::NoToAll;
 
   for(int i = 0; i < ui->captures->count(); i++)
@@ -729,16 +737,25 @@ bool LiveCapture::checkAllowClose(bool multipleClosures, bool &noToAll)
         // if we're closing multiple connections make sure the user is sure of what they're doing
         if(multipleClosures)
         {
-          QMessageBox::StandardButton res2 =
-              RDDialog::question(this, tr("Discarding all captures"),
-                                 tr("Multiple connections open have potentially unsaved captures, "
-                                    "are you sure you wish to discard them all?"));
+          QMessageBox::StandardButton res2 = RDDialog::question(
+              this, tr("Discarding all captures"),
+              tr("Multiple connections open have potentially unsaved captures, "
+                 "this will discard all captures in all connections, are you sure?"));
 
           // if the user is sure, apply the no to all
           if(res2 == QMessageBox::Yes)
+          {
             noToAll = true;
-
-          // otherwise we'll treat this as a simple 'no' in case they changed their mind.
+          }
+          else
+          {
+            // otherwise if the user changed their mind at this stage, cancel everything rather than
+            // trying to continue, to keep the flow simple and ensure the user is clear what is
+            // happening at all points. We do not support discarding all captures in one connection
+            // then individually filtering another.
+            m_IgnoreThreadClosed = false;
+            return false;
+          }
         }
         else
         {
@@ -803,7 +820,7 @@ bool LiveCapture::checkAllowClose(bool multipleClosures, bool &noToAll)
 bool LiveCapture::checkAllowClose()
 {
   bool dummy = false;
-  return checkAllowClose(false, dummy);
+  return checkAllowClose(unsavedCaptureCount(), dummy);
 }
 
 void LiveCapture::openCapture(Capture *cap)
@@ -973,6 +990,21 @@ void LiveCapture::fileSaved(QString from, QString to)
       cap->local = true;
     }
   }
+}
+
+int LiveCapture::unsavedCaptureCount()
+{
+  int ret = 0;
+
+  for(int i = 0; i < ui->captures->count(); i++)
+  {
+    Capture *cap = GetCapture(ui->captures->item(i));
+
+    if(!cap->saved)
+      ret++;
+  }
+
+  return ret;
 }
 
 void LiveCapture::previewToggle_toggled(bool checked)

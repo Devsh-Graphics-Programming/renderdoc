@@ -63,38 +63,70 @@ jobs:
           git diff;) | tr '\n' '\001' | sed -e 's#\x01#%0A#g';
           exit 1;
         )
+  cmake-minimum:
+    name: Baseline cmake check
+    needs: [commit-msg, clang-format]
+    runs-on: ubuntu-18.04
+    env:
+      QT_SELECT: qt5
+    strategy:
+      fail-fast: true
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 5
+    - name: Download minimum supported cmake version
+      run: |
+        pushd /tmp
+        wget https://cmake.org/files/v2.8/cmake-2.8.12.2-Linux-i386.tar.gz
+        tar -zxvf cmake-2.8.12.2-Linux-i386.tar.gz
+        popd
+    - name: Install compilation dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libx11-dev mesa-common-dev libgl1-mesa-dev qtbase5-dev libxcb-keysyms1-dev
+    - name: Configure renderdoc with cmake
+      run: |
+        mkdir build
+        cd build
+        /tmp/cmake-2.8.12.2-Linux-i386/bin/cmake -DCMAKE_BUILD_TYPE=Debug ..
   windows:
     name: Windows
     needs: [commit-msg, clang-format]
-    runs-on: windows-2019
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        name: [ VS2015 x86 Development, VS2015 x64 Development, VS2015 x64 Release, VS2017 x64 Development, VS2019 x64 Development ]
+        name: [ VS2015 x86 Development, VS2015 x64 Development, VS2015 x64 Release, VS2019 x64 Development, VS2022 x64 Development ]
         include:
           - name: VS2015 x86 Development
+            os: windows-2019
             compiler: VS2015
             toolset: v140
             platform: x86
             configuration: Development
           - name: VS2015 x64 Development
+            os: windows-2019
             compiler: VS2015
             toolset: v140
             platform: x64
             configuration: Development
           - name: VS2015 x64 Release
+            os: windows-2019
             compiler: VS2015
             toolset: v140
             platform: x64
             configuration: Release
-          - name: VS2017 x64 Development
-            compiler: VS2017
-            toolset: v141
-            platform: x64
-            configuration: Development
           - name: VS2019 x64 Development
+            os: windows-2019
             compiler: VS2019
             toolset: v142
+            platform: x64
+            configuration: Development
+          - name: VS2022 x64 Development
+            os: windows-2022
+            compiler: VS2022
+            toolset: v143
             platform: x64
             configuration: Development
     steps:
@@ -120,7 +152,7 @@ jobs:
     - if: matrix.configuration == 'Development'
       name: Running UI unit tests
       run: |
-        if ! ./*/Development/qrenderdoc.exe --unittest test.log; then
+        if ! ./*/Development/qrenderdoc.exe --unittest log=test.log; then
           echo "::error::$(cat test.log)" | tr -d '\r' |  tr '\n' '\001' | sed -e 's#\x01#%0D%0A#g';
           exit 1;
         fi
@@ -208,7 +240,7 @@ jobs:
     - if: matrix.type == 'Debug'
       name: Run UI unit tests
       run: |
-        if ! ./build/bin/qrenderdoc --unittest test.log; then
+        if ! ./build/bin/qrenderdoc --unittest log=test.log; then
           echo "::error::$(cat test.log)" | tr '\n' '\001' | sed -e 's#\x01#%0A#g';
           exit 1;
         fi
@@ -267,7 +299,7 @@ jobs:
       run: |
         mkdir build
         pushd build
-        cmake -DCMAKE_BUILD_TYPE=${{ matrix.type }} ..
+        cmake -DENABLE_METAL=On -DCMAKE_BUILD_TYPE=${{ matrix.type }} ..
         make -j2
         popd
     - if: matrix.type == 'Debug'
@@ -280,7 +312,7 @@ jobs:
     - if: matrix.type == 'Debug'
       name: Run UI unit tests
       run: |
-        if ! ./build/bin/qrenderdoc.app/Contents/MacOS/qrenderdoc --unittest test.log; then
+        if ! ./build/bin/qrenderdoc.app/Contents/MacOS/qrenderdoc --unittest log=test.log; then
           echo "::error::$(cat test.log)" | tr '\n' '\001' | sed -e $'s#\x01#%0A#g';
           exit 1;
         fi
@@ -299,7 +331,7 @@ jobs:
       env:
         UPLOADLOCATION: ${{ secrets.MacUploadLocation }}
       run: |
-        echo 'renderdoc.org,209.133.211.153 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBObosfTSrCa11pDrmPxJ6zzNltDJls3Vc0AMVrqX0hAGFoFWbGvdDm3wpDBYHpkL9LmG6bJNHqWmO59oUJZYl9E=' >> $HOME/.ssh/known_hosts
+        echo '|1|if7jyhkGD/xNbs/bfYSZ4zcgIoo=|gjhyr71exVKt7rNtMly68VccvLk= ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPhCdt25vFMUQ63wTBxKLCZY1Ax+F9Y+SSusjuG6b4xtdVQ1lo3FqHnyLtsvYja0R0RiwTEob6TDrr/j7rjR96M=' >> $HOME/.ssh/known_hosts
         ls -lR $HOME/.ssh
         cat $HOME/.ssh/known_hosts
         lftp sftp://"${UPLOADLOCATION}" -e "cd upload; put ${FNAME}; bye"

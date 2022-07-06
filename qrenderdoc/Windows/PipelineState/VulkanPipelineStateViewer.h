@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -125,7 +125,7 @@ private:
   template <typename viewType>
   bool setViewDetails(RDTreeWidgetItem *node, const viewType &view, TextureDescription *tex,
                       bool stageBitsIncluded, const QString &hiddenCombinedSampler,
-                      bool includeSampleLocations = false);
+                      bool includeSampleLocations = false, bool includeOffsets = false);
 
   template <typename viewType>
   bool setViewDetails(RDTreeWidgetItem *node, const viewType &view, BufferDescription *buf,

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -83,9 +83,9 @@ CrashDialog::CrashDialog(PersistantConfig &cfg, QVariantMap crashReportJSON, QWi
 
     ICaptureFile *cap = RENDERDOC_OpenCaptureFile();
 
-    ReplayStatus status = cap->OpenFile(capInfo.absoluteFilePath(), "", NULL);
+    ResultDetails result = cap->OpenFile(capInfo.absoluteFilePath(), "", NULL);
 
-    if(status == ReplayStatus::Succeeded)
+    if(result.OK())
     {
       Thumbnail thumb = cap->GetThumbnail(FileType::Raw, 320);
       QImage i = QImage(thumb.data.data(), (int)thumb.width, (int)thumb.height, QImage::Format_RGB888)

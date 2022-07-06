@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -521,7 +521,7 @@ public:
   const rdcarray<EntryPoint> &GetEntries() { return entries; }
   const rdcarray<Variable> &GetGlobals() { return globals; }
   Id GetIDType(Id id) { return idTypes[id]; }
-  rdcarray<uint32_t> GetSPIRV() const { return m_SPIRV; }
+  const rdcarray<uint32_t> &GetSPIRV() const { return m_SPIRV; }
 protected:
   virtual void Parse(const rdcarray<uint32_t> &spirvWords);
 
@@ -537,6 +537,8 @@ protected:
   virtual void UnregisterOp(Iter iter);
   // after parsing - e.g. to do any deferred post-processing
   virtual void PostParse();
+
+  Iter GetID(Id id);
 
   ShaderVariable MakeNULL(const DataType &type, uint64_t value);
 
@@ -567,7 +569,16 @@ protected:
   SparseIdMap<SampledImage> sampledImageTypes;
   SparseIdMap<FunctionType> functionTypes;
 
+  enum ExtSet
+  {
+    ExtSet_GLSL450 = 0,
+    ExtSet_Printf = 1,
+    ExtSet_ShaderDbg = 2,
+    ExtSet_Count,
+  };
+
   std::map<Id, rdcstr> extSets;
+  Id knownExtSet[ExtSet_Count];
 
   struct LogicalSection
   {

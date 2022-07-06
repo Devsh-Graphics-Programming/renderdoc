@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2021 Baldur Karlsson
+ * Copyright (c) 2020-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,9 +24,13 @@
 
 #include "spirv_debug.h"
 #include "common/formatting.h"
+#include "core/settings.h"
 #include "spirv_op_helpers.h"
 #include "spirv_reflect.h"
 #include "var_dispatch_helpers.h"
+
+RDOC_CONFIG(bool, Vulkan_Debug_UseDebugColumnInformation, false,
+            "Control whether column information should be read from vulkan debug info.");
 
 // this could be cleaner if ShaderVariable wasn't a very public struct, but it's not worth it so
 // we just reserve value slots that we know won't be used in opaque variables
@@ -366,6 +370,7 @@ void Reflector::CheckDebuggable(bool &debuggable, rdcstr &debugStatus) const
       case Capability::ExpectAssumeKHR:
       case Capability::BitInstructions:
       case Capability::UniformDecoration:
+      case Capability::SignedZeroInfNanPreserve:
       {
         supported = true;
         break;
@@ -386,7 +391,6 @@ void Reflector::CheckDebuggable(bool &debuggable, rdcstr &debugStatus) const
       // float controls
       case Capability::DenormPreserve:
       case Capability::DenormFlushToZero:
-      case Capability::SignedZeroInfNanPreserve:
       case Capability::RoundingModeRTE:
       case Capability::RoundingModeRTZ:
 
@@ -518,6 +522,9 @@ void Reflector::CheckDebuggable(bool &debuggable, rdcstr &debugStatus) const
       case Capability::LongConstantCompositeINTEL:
       case Capability::DebugInfoModuleINTEL:
       case Capability::BindlessTextureNV:
+      case Capability::MemoryAccessAliasingINTEL:
+      case Capability::SplitBarrierINTEL:
+      case Capability::GroupUniformArithmeticKHR:
       case Capability::Max:
       case Capability::Invalid:
       {
@@ -629,7 +636,10 @@ ShaderDebugTrace *Debugger::BeginDebug(DebugAPIWrapper *api, const ShaderStage s
 
   // evaluate all constants
   for(auto it = constants.begin(); it != constants.end(); it++)
+  {
     active.ids[it->first] = EvaluateConstant(it->first, specInfo);
+    active.ids[it->first].name = GetRawName(it->first);
+  }
 
   rdcarray<rdcstr> inputSigNames, outputSigNames;
 
@@ -704,8 +714,10 @@ ShaderDebugTrace *Debugger::BeginDebug(DebugAPIWrapper *api, const ShaderStage s
 
       const rdcarray<rdcstr> &sigNames = isInput ? inputSigNames : outputSigNames;
 
+      bool addSource = m_DebugInfo.valid ? m_DebugInfo.globals.contains(v.id) : true;
+
       // fill the interface variable
-      auto fillInputCallback = [this, isInput, ret, &sigNames, &rawName, &sourceName](
+      auto fillInputCallback = [this, isInput, addSource, ret, &sigNames, &rawName, &sourceName](
           ShaderVariable &var, const Decorations &curDecorations, const DataType &type,
           uint64_t location, const rdcstr &accessSuffix) {
 
@@ -753,7 +765,7 @@ ShaderDebugTrace *Debugger::BeginDebug(DebugAPIWrapper *api, const ShaderStage s
                 isInput ? DebugVariableType::Input : DebugVariableType::Variable, debugVarName, x));
 
           ret->sourceVars.push_back(sourceVar);
-          if(!isInput)
+          if(!isInput && addSource)
             globalSourceVars.push_back(sourceVar);
         }
       };
@@ -1105,7 +1117,7 @@ ShaderDebugTrace *Debugger::BeginDebug(DebugAPIWrapper *api, const ShaderStage s
 
       liveGlobals.push_back(v.id);
 
-      if(sourceName != var.name)
+      if(sourceName != var.name && (!m_DebugInfo.valid || m_DebugInfo.globals.contains(v.id)))
       {
         SourceVariableMapping sourceVar;
         sourceVar.name = sourceName;
@@ -1226,6 +1238,9 @@ rdcarray<ShaderDebugState> Debugger::ContinueDebug()
         thread.FillCallstack(initial);
         initial.nextInstruction = thread.nextInstruction;
         initial.sourceVars = thread.sourceVars;
+
+        if(m_DebugInfo.valid)
+          initial.sourceVars = globalSourceVars;
       }
       else
       {
@@ -1236,6 +1251,14 @@ rdcarray<ShaderDebugState> Debugger::ContinueDebug()
     // globals won't be filled out by entering the entry point, ensure their change is registered.
     for(const Id &v : liveGlobals)
       initial.changes.push_back({ShaderVariable(), GetPointerValue(active.ids[v])});
+
+    if(m_DebugInfo.valid)
+    {
+      // debug info can refer to constants for source variable values. Add an initial change for any
+      // that are so referenced
+      for(const Id &v : m_DebugInfo.constants)
+        initial.changes.push_back({ShaderVariable(), GetPointerValue(active.ids[v])});
+    }
 
     ret.push_back(initial);
 
@@ -1279,11 +1302,13 @@ rdcarray<ShaderDebugState> Debugger::ContinueDebug()
         {
           ShaderDebugState state;
 
+          size_t instOffs = instructionOffsets[thread.nextInstruction];
+
           // see if we're retiring any IDs at this state
           for(size_t l = 0; l < thread.live.size();)
           {
             Id id = thread.live[l];
-            if(idDeathOffset[id] < instructionOffsets[thread.nextInstruction])
+            if(idDeathOffset[id] < instOffs)
             {
               thread.live.erase(l);
               ShaderVariableChange change;
@@ -1304,8 +1329,131 @@ rdcarray<ShaderDebugState> Debugger::ContinueDebug()
 
           thread.StepNext(&state, workgroup);
           state.stepIndex = steps;
-          state.sourceVars = thread.sourceVars;
+
           thread.FillCallstack(state);
+
+          if(m_DebugInfo.valid)
+          {
+            size_t startOffs = instOffs;
+            size_t endOffs = instructionOffsets[thread.nextInstruction - 1];
+
+            // apply any local mapping changes
+            for(auto it = m_DebugInfo.localMappings.lower_bound(startOffs);
+                it != m_DebugInfo.localMappings.end(); ++it)
+            {
+              // if we've gone too far, end
+              if(it->first > endOffs)
+                break;
+
+              const LocalMapping &mapping = it->second;
+
+              if(mapping.second == Id())
+              {
+                // if the Ids are empty, this is a scope exiting. Potentially multiple scopes at
+                // once. The only scopes that could have exited are the ones that we were previously
+                // in, so start from the scope of the previous instruction and walk up its parents.
+                // Set curId to empty on all the locals of any scope that's exited
+                ScopeData *scope = m_DebugInfo.lineScope[startOffs];
+                while(scope)
+                {
+                  if(scope->end <= endOffs)
+                  {
+                    for(Id id : scope->locals)
+                      m_DebugInfo.locals[id].curId = Id();
+                  }
+
+                  scope = scope->parent;
+                }
+              }
+              else
+              {
+                // otherwise this is indicating the new current Id of a local
+                m_DebugInfo.locals[mapping.first].curId = mapping.second;
+              }
+            }
+
+            // start with the global source vars
+            state.sourceVars = globalSourceVars;
+
+            // now go from the innermost scope to the outermost. At each scope add its locals
+            ScopeData *scope = m_DebugInfo.lineScope[endOffs];
+            while(scope)
+            {
+              for(Id id : scope->locals)
+              {
+                const LocalData &l = m_DebugInfo.locals[id];
+
+                if(l.curId != Id())
+                {
+                  ShaderVariable var = ReadFromPointer(thread.ids[l.curId]);
+
+                  // don't map locals to IDs that don't exist yet
+                  if(!var.name.empty())
+                  {
+                    SourceVariableMapping sourceVar;
+
+                    sourceVar.name = l.name;
+                    sourceVar.offset = 0;
+                    sourceVar.type = var.type;
+                    sourceVar.rows = RDCMAX(1U, (uint32_t)var.rows);
+                    sourceVar.columns = RDCMAX(1U, (uint32_t)var.columns);
+                    for(uint32_t x = 0; x < sourceVar.rows * sourceVar.columns; x++)
+                      sourceVar.variables.push_back(
+                          DebugVariableReference(DebugVariableType::Variable, var.name, x));
+
+                    state.sourceVars.push_back(sourceVar);
+                  }
+                }
+              }
+
+              scope = scope->parent;
+            }
+
+            // append any inlined functions to the top of the stack
+            InlineData *inlined = m_DebugInfo.lineInline[endOffs];
+
+            size_t insertPoint = state.callstack.size();
+
+            // start with the current scope, it refers to the *inlined* function
+            if(inlined)
+            {
+              scope = m_DebugInfo.lineScope[endOffs];
+              // find the function parent of the current scope
+              while(scope && scope->parent && scope->type == DebugScope::Block)
+                scope = scope->parent;
+
+              state.callstack.insert(insertPoint, scope->name);
+            }
+
+            // move to the next inline up on our inline stack. If we reach an actual function
+            // call, this parent will be NULL as there was no more inlining - the final scope will
+            // refer to the real function which is already on our stack
+            while(inlined && inlined->parent)
+            {
+              scope = inlined->scope;
+              // find the function parent of the current scope
+              while(scope && scope->parent && scope->type == DebugScope::Block)
+                scope = scope->parent;
+
+              state.callstack.insert(insertPoint, scope->name);
+
+              inlined = inlined->parent;
+            }
+          }
+          else
+          {
+            state.sourceVars = thread.sourceVars;
+          }
+
+          // sort sourceVars by last write to the underlying variable
+          std::sort(state.sourceVars.begin(), state.sourceVars.end(),
+                    [&thread](const SourceVariableMapping &a, const SourceVariableMapping &b) {
+                      Id aId = ParseRawName(a.variables[0].name);
+                      Id bId = ParseRawName(b.variables[0].name);
+
+                      return thread.lastWrite[aId] < thread.lastWrite[bId];
+                    });
+
           ret.push_back(state);
 
           steps++;
@@ -1884,6 +2032,24 @@ rdcstr Debugger::GetRawName(Id id) const
   return StringFormat::Fmt("_%u", id.value());
 }
 
+Id Debugger::ParseRawName(const rdcstr &name)
+{
+  if(name[0] != '_')
+    return Id();
+
+  uint32_t val = 0;
+  for(int i = 1; i < name.count(); i++)
+  {
+    if(name[i] < '0' || name[i] > '9')
+      return Id();
+
+    val *= 10;
+    val += uint32_t(name[i] - '0');
+  }
+
+  return Id::fromWord(val);
+}
+
 rdcstr Debugger::GetHumanName(Id id)
 {
   // see if we have a dynamic name assigned (to disambiguate), if so use that
@@ -1914,9 +2080,18 @@ rdcstr Debugger::GetHumanName(Id id)
   return name;
 }
 
+const rdcarray<SourceVariableMapping> &Debugger::GetGlobalSourceVars()
+{
+  static const rdcarray<SourceVariableMapping> empty;
+  return m_DebugInfo.valid ? empty : globalSourceVars;
+}
+
 void Debugger::AddSourceVars(rdcarray<SourceVariableMapping> &sourceVars, const ShaderVariable &var,
                              Id id)
 {
+  if(m_DebugInfo.valid)
+    return;
+
   rdcstr name;
 
   auto it = dynamicNames.find(id);
@@ -1927,8 +2102,6 @@ void Debugger::AddSourceVars(rdcarray<SourceVariableMapping> &sourceVars, const 
 
   if(!name.empty())
   {
-    Id type = idTypes[id];
-
     SourceVariableMapping sourceVar;
 
     sourceVar.name = name;
@@ -2366,13 +2539,18 @@ uint32_t Debugger::ApplyDerivatives(uint32_t quadIndex, const Decorations &curDe
       ApplyDerivative<float>(activeLaneIndex, quadIndex, outVar.value.f32v.data(), derivs);
     else if(outVar.type == VarType::Half)
       ApplyDerivative<half_float::half>(activeLaneIndex, quadIndex,
-                                        (half_float::half *)outVar.value.u16v.data(), derivs);
+                                        (half_float::half *)outVar.value.f16v.data(), derivs);
     else if(outVar.type == VarType::Double)
       ApplyDerivative<double>(activeLaneIndex, quadIndex, outVar.value.f64v.data(), derivs);
   }
 
   // each row consumes a new location
   return outVar.rows;
+}
+
+bool Debugger::IsDebugExtInstSet(Id id) const
+{
+  return knownExtSet[ExtSet_ShaderDbg] == id;
 }
 
 void Debugger::PreParse(uint32_t maxId)
@@ -2393,6 +2571,44 @@ void Debugger::PostParse()
   for(const Variable &v : globals)
     idDeathOffset[v.id] = ~0U;
 
+  if(m_DebugInfo.valid)
+  {
+    // every scope's parent lasts at least as long as it
+    for(auto it = m_DebugInfo.scopes.begin(); it != m_DebugInfo.scopes.end(); ++it)
+    {
+      ScopeData *scope = &it->second;
+
+      while(scope->parent)
+      {
+        scope->parent->end = RDCMAX(scope->parent->end, scope->end);
+        scope = scope->parent;
+      }
+    }
+
+    // add a dummy localMappings entry for each scope end
+    for(auto it = m_DebugInfo.scopes.begin(); it != m_DebugInfo.scopes.end(); ++it)
+      m_DebugInfo.localMappings[it->second.end] = {Id(), Id()};
+
+    for(auto it = m_DebugInfo.localMappings.begin(); it != m_DebugInfo.localMappings.end(); ++it)
+    {
+      if(it->second.second == Id())
+        continue;
+
+      const LocalData &l = m_DebugInfo.locals[it->second.first];
+      if(l.scope == NULL)
+        continue;
+
+      // keep last raw ID alive until the scope ends
+      Id id = it->second.second;
+
+      idDeathOffset[id] = RDCMAX(l.scope->end + 1, RDCMAX(it->first + 1, idDeathOffset[id]));
+    }
+
+    // reset current Ids
+    for(auto it = m_DebugInfo.locals.begin(); it != m_DebugInfo.locals.end(); ++it)
+      it->second.curId = Id();
+  }
+
   memberNames.clear();
 }
 
@@ -2409,11 +2625,13 @@ void Debugger::RegisterOp(Iter it)
     idDeathOffset[id] = RDCMAX(it.offs() + 1, idDeathOffset[id]);
   });
 
+  bool leaveScope = false;
+
   if(opdata.op == Op::ExtInst)
   {
     OpExtInst extinst(it);
 
-    if(extSets[extinst.set] == "GLSL.std.450")
+    if(knownExtSet[ExtSet_GLSL450] == extinst.set)
     {
       // all parameters to GLSL.std.450 are Ids, extend idDeathOffset appropriately
       for(const uint32_t param : extinst.params)
@@ -2422,7 +2640,7 @@ void Debugger::RegisterOp(Iter it)
         idDeathOffset[id] = RDCMAX(it.offs() + 1, idDeathOffset[id]);
       }
     }
-    else if(extSets[extinst.set] == "NonSemantic.DebugPrintf")
+    else if(knownExtSet[ExtSet_Printf] == extinst.set)
     {
       // all parameters to NonSemantic.DebugPrintf are Ids, extend idDeathOffset appropriately
       for(const uint32_t param : extinst.params)
@@ -2430,6 +2648,200 @@ void Debugger::RegisterOp(Iter it)
         Id id = Id::fromWord(param);
         idDeathOffset[id] = RDCMAX(it.offs() + 1, idDeathOffset[id]);
       }
+    }
+    else if(knownExtSet[ExtSet_ShaderDbg] == extinst.set)
+    {
+      // the types are identical just with different accessors
+      OpShaderDbg &dbg = (OpShaderDbg &)extinst;
+
+      if(dbg.inst == ShaderDbg::Source)
+      {
+        int32_t fileIndex = (int32_t)m_DebugInfo.sources.size();
+
+        m_DebugInfo.sources[dbg.result] = fileIndex;
+        m_DebugInfo.filenames[dbg.result] = strings[dbg.arg<Id>(0)];
+      }
+      else if(dbg.inst == ShaderDbg::CompilationUnit)
+      {
+        m_DebugInfo.scopes[dbg.result] = {
+            DebugScope::CompilationUnit,
+            NULL,
+            1,
+            1,
+            m_DebugInfo.sources[dbg.arg<Id>(2)],
+            0,
+            m_DebugInfo.filenames[dbg.arg<Id>(2)],
+        };
+      }
+      else if(dbg.inst == ShaderDbg::Function)
+      {
+        rdcstr name = strings[dbg.arg<Id>(0)];
+        // ignore arg 1 type
+        // don't use arg 2 source - assume the parent is in the same file so it's redundant
+        uint32_t line = EvaluateConstant(dbg.arg<Id>(3), {}).value.u32v[0];
+        uint32_t column = EvaluateConstant(dbg.arg<Id>(4), {}).value.u32v[0];
+        ScopeData *parent = &m_DebugInfo.scopes[dbg.arg<Id>(5)];
+        // ignore arg 6 linkage name
+        // ignore arg 7 flags
+        // ignore arg 8 scope line
+        // ignore arg 9 (optional) declaration
+
+        m_DebugInfo.scopes[dbg.result] = {
+            DebugScope::Function, parent, line, column, parent->fileIndex, 0, name,
+        };
+      }
+      else if(dbg.inst == ShaderDbg::TypeComposite)
+      {
+        rdcstr name = strings[dbg.arg<Id>(0)];
+        uint32_t tag = EvaluateConstant(dbg.arg<Id>(1), {}).value.u32v[0];
+        const rdcstr tagString[3] = {
+            "class ", "struct ", "union ",
+        };
+
+        // don't use arg 2 source - assume the parent is in the same file so it's redundant
+        uint32_t line = EvaluateConstant(dbg.arg<Id>(3), {}).value.u32v[0];
+        uint32_t column = EvaluateConstant(dbg.arg<Id>(4), {}).value.u32v[0];
+        ScopeData *parent = &m_DebugInfo.scopes[dbg.arg<Id>(5)];
+        // ignore arg 6 linkage name
+        // ignore arg 7 size
+        // ignore arg 8 flags
+        // ignore arg 9... members
+
+        name = tagString[tag % 3] + name;
+
+        m_DebugInfo.scopes[dbg.result] = {
+            DebugScope::Composite, parent, line, column, parent->fileIndex, 0, name,
+        };
+      }
+      else if(dbg.inst == ShaderDbg::LexicalBlock)
+      {
+        // don't use arg 0 source - assume the parent is in the same file so it's redundant
+        uint32_t line = EvaluateConstant(dbg.arg<Id>(1), {}).value.u32v[0];
+        uint32_t column = EvaluateConstant(dbg.arg<Id>(2), {}).value.u32v[0];
+        ScopeData *parent = &m_DebugInfo.scopes[dbg.arg<Id>(3)];
+
+        rdcstr name;
+        if(dbg.params.count() >= 5)
+        {
+          name = strings[dbg.arg<Id>(4)];
+          if(name.isEmpty())
+            name = "anonymous_scope";
+        }
+        else
+        {
+          name = parent->name + ":" + ToStr(line);
+        }
+
+        m_DebugInfo.scopes[dbg.result] = {
+            DebugScope::Block, parent, line, column, parent->fileIndex, 0, name,
+        };
+      }
+      else if(dbg.inst == ShaderDbg::Scope)
+      {
+        if(m_DebugInfo.curScope)
+          m_DebugInfo.curScope->end = it.offs();
+
+        m_DebugInfo.curScope = &m_DebugInfo.scopes[dbg.arg<Id>(0)];
+
+        if(dbg.params.size() >= 2)
+          m_DebugInfo.curInline = &m_DebugInfo.inlined[dbg.arg<Id>(1)];
+        else
+          m_DebugInfo.curInline = NULL;
+      }
+      else if(dbg.inst == ShaderDbg::NoScope)
+      {
+        // don't want to set curScope to NULL until after this instruction. That way flood-fill of
+        // scopes in PostParse() can find this instruction in a scope.
+        leaveScope = true;
+      }
+      else if(dbg.inst == ShaderDbg::GlobalVariable)
+      {
+        // copy the name string to the variable string only if it's empty. If it has a name already,
+        // we prefer that. If the variable is DebugInfoNone then we don't care about it's name.
+        if(strings[dbg.arg<Id>(7)].empty())
+          strings[dbg.arg<Id>(7)] = strings[dbg.arg<Id>(0)];
+
+        OpVariable var(GetID(dbg.arg<Id>(7)));
+
+        if(var.storageClass == StorageClass::Private ||
+           var.storageClass == StorageClass::Workgroup || var.storageClass == StorageClass::Output)
+        {
+          m_DebugInfo.globals.push_back(var.result);
+        }
+      }
+      else if(dbg.inst == ShaderDbg::LocalVariable)
+      {
+        m_DebugInfo.locals[dbg.result] = {
+            strings[dbg.arg<Id>(0)], &m_DebugInfo.scopes[dbg.arg<Id>(5)],
+        };
+
+        m_DebugInfo.scopes[dbg.arg<Id>(5)].locals.push_back(dbg.result);
+      }
+      else if(dbg.inst == ShaderDbg::Declare || dbg.inst == ShaderDbg::Value)
+      {
+        Id id = dbg.arg<Id>(1);
+
+        m_DebugInfo.localMappings[it.offs()] = {dbg.arg<Id>(0), dbg.arg<Id>(1)};
+
+        LocalData &local = m_DebugInfo.locals[dbg.arg<Id>(0)];
+
+        // keep the previous raw ID alive at least until this location starts
+        if(local.curId != Id())
+          idDeathOffset[local.curId] = RDCMAX(it.offs() + 1, idDeathOffset[local.curId]);
+
+        local.curId = id;
+
+        if(constants.find(id) != constants.end() && !m_DebugInfo.constants.contains(id))
+          m_DebugInfo.constants.push_back(id);
+
+        OpShaderDbg expr(GetID(dbg.arg<Id>(2)));
+
+        // don't support expressions yet
+        RDCASSERT(expr.params.empty());
+
+        // don't support indexes yet for values
+        RDCASSERT(dbg.params.size() == 3);
+      }
+      else if(dbg.inst == ShaderDbg::InlinedAt)
+      {
+        // ignore arg 0 the line number
+        ScopeData *scope = &m_DebugInfo.scopes[dbg.arg<Id>(1)];
+
+        if(dbg.params.count() >= 3)
+          m_DebugInfo.inlined[dbg.result] = {scope, &m_DebugInfo.inlined[dbg.arg<Id>(2)]};
+        else
+          m_DebugInfo.inlined[dbg.result] = {scope, NULL};
+      }
+      else if(dbg.inst == ShaderDbg::InlinedVariable)
+      {
+        // TODO handle inlined variables
+      }
+      else if(dbg.inst == ShaderDbg::Line)
+      {
+        m_CurLineCol.lineStart = EvaluateConstant(dbg.arg<Id>(1), {}).value.u32v[0];
+        m_CurLineCol.lineEnd = EvaluateConstant(dbg.arg<Id>(2), {}).value.u32v[0];
+        if(Vulkan_Debug_UseDebugColumnInformation())
+        {
+          m_CurLineCol.colStart = EvaluateConstant(dbg.arg<Id>(3), {}).value.u32v[0];
+          m_CurLineCol.colEnd = EvaluateConstant(dbg.arg<Id>(4), {}).value.u32v[0];
+        }
+
+        // find file index by filename matching, this would be nice to improve as it's brittle
+        m_CurLineCol.fileIndex = m_DebugInfo.sources[dbg.arg<Id>(0)];
+      }
+      else if(dbg.inst == ShaderDbg::NoLine)
+      {
+        m_CurLineCol = LineColumnInfo();
+      }
+    }
+  }
+  else if(opdata.op == Op::ExtInstImport)
+  {
+    OpExtInstImport extimport(it);
+
+    if(extimport.result == knownExtSet[ExtSet_ShaderDbg])
+    {
+      m_DebugInfo.valid = true;
     }
   }
 
@@ -2446,18 +2858,55 @@ void Debugger::RegisterOp(Iter it)
   {
     OpLine line(it);
 
-    m_CurLineCol.lineStart = line.line;
-    m_CurLineCol.lineEnd = line.line;
-    m_CurLineCol.colStart = line.column;
-    m_CurLineCol.fileIndex = (int32_t)m_Files[line.file];
+    if(m_DebugInfo.valid)
+    {
+      // ignore any OpLine when we have proper debug info
+    }
+    else
+    {
+      m_CurLineCol.lineStart = line.line;
+      m_CurLineCol.lineEnd = line.line;
+      m_CurLineCol.colStart = line.column;
+      m_CurLineCol.fileIndex = (int32_t)m_Files[line.file];
+    }
   }
   else if(opdata.op == Op::NoLine)
   {
-    m_CurLineCol = LineColumnInfo();
+    if(!m_DebugInfo.valid)
+      m_CurLineCol = LineColumnInfo();
   }
   else
   {
-    m_LineColInfo[it.offs()] = m_CurLineCol;
+    // for debug info, only apply line info if we're in a scope. Otherwise the line info may not
+    // apply to this instruction. This means OpPhi's will never be line mapped
+    if(m_DebugInfo.valid)
+    {
+      if(m_DebugInfo.curScope)
+        m_LineColInfo[it.offs()] = m_CurLineCol;
+    }
+    else
+    {
+      m_LineColInfo[it.offs()] = m_CurLineCol;
+    }
+  }
+
+  if(m_DebugInfo.valid)
+  {
+    m_DebugInfo.lineScope[it.offs()] = m_DebugInfo.curScope;
+    m_DebugInfo.lineInline[it.offs()] = m_DebugInfo.curInline;
+  }
+
+  // if we're explicitly leaving the scope because of a DebugNoScope, or if we're leaving due to the
+  // end of a block then set scope to NULL now.
+  if(leaveScope || it.opcode() == Op::Kill || it.opcode() == Op::Unreachable ||
+     it.opcode() == Op::Branch || it.opcode() == Op::BranchConditional ||
+     it.opcode() == Op::Switch || it.opcode() == Op::Return || it.opcode() == Op::ReturnValue)
+  {
+    if(m_DebugInfo.curScope)
+      m_DebugInfo.curScope->end = it.offs();
+
+    m_DebugInfo.curScope = NULL;
+    m_DebugInfo.curInline = NULL;
   }
 
   if(opdata.op == Op::String)
@@ -2515,8 +2964,10 @@ void Debugger::RegisterOp(Iter it)
     // give the variable a name based on the type. This is a common pattern in GLSL for global
     // blocks, and since the variable is how we access commonly we should give it a recognisable
     // name.
+    //
+    // Don't do this if we have debug info, rely on it purely to give us the right data
     if(strings[var.result].empty() && dataTypes[varType].type == DataType::StructType &&
-       !strings[varType].empty())
+       !strings[varType].empty() && !m_DebugInfo.valid)
     {
       strings[var.result] = strings[varType] + "_var";
     }

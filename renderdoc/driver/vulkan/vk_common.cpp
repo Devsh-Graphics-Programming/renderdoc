@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -102,6 +102,11 @@ void VkMarkerRegion::End(VkCommandBuffer cmd)
   ObjDisp(cmd)->CmdEndDebugUtilsLabelEXT(Unwrap(cmd));
 }
 
+VkDevice VkMarkerRegion::GetDev()
+{
+  return vk->GetDev();
+}
+
 void VkMarkerRegion::Begin(const rdcstr &marker, VkQueue q)
 {
   if(q == VK_NULL_HANDLE)
@@ -160,22 +165,19 @@ void VkMarkerRegion::End(VkQueue q)
 }
 
 template <>
-void NameVulkanObject(VkImage obj, const rdcstr &name)
+VkObjectType objType<VkImage>()
 {
-  if(!VkMarkerRegion::vk)
-    return;
-
-  VkDevice dev = VkMarkerRegion::vk->GetDev();
-
-  if(!ObjDisp(dev)->SetDebugUtilsObjectNameEXT)
-    return;
-
-  VkDebugUtilsObjectNameInfoEXT info = {};
-  info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
-  info.objectType = VK_OBJECT_TYPE_IMAGE;
-  info.objectHandle = NON_DISP_TO_UINT64(Unwrap(obj));
-  info.pObjectName = name.c_str();
-  ObjDisp(dev)->SetDebugUtilsObjectNameEXT(Unwrap(dev), &info);
+  return VK_OBJECT_TYPE_IMAGE;
+}
+template <>
+VkObjectType objType<VkImageView>()
+{
+  return VK_OBJECT_TYPE_IMAGE_VIEW;
+}
+template <>
+VkObjectType objType<VkFramebuffer>()
+{
+  return VK_OBJECT_TYPE_FRAMEBUFFER;
 }
 
 void GPUBuffer::Create(WrappedVulkan *driver, VkDevice dev, VkDeviceSize size, uint32_t ringSize,
@@ -351,6 +353,10 @@ void GPUBuffer::Unmap()
 bool VkInitParams::IsSupportedVersion(uint64_t ver)
 {
   if(ver == CurrentVersion)
+    return true;
+
+  // 0x13 -> 0x14 - added missing VkCommandBufferInheritanceRenderingInfo::flags
+  if(ver == 0x13)
     return true;
 
   // 0x12 -> 0x13 - added full sparse resource support
@@ -1015,10 +1021,16 @@ VkDriverInfo::VkDriverInfo(const VkPhysicalDeviceProperties &physProps, bool act
       RDCLOG("Enabling Qualcomm driver workarounds");
 
     // not fixed yet that I know of, or unknown driver with fixes
-    qualcommLeakingUBOOffsets = true;
     qualcommDrefNon2DCompileCrash = true;
     qualcommLineWidthCrash = true;
-    bdaBrokenDriver = true;
+
+    // KHR_buffer_device_address has been tested on 622 (Quest2)
+    // UBO dynamic offset leak has been fixed in early 2020, 622 tested.
+    if(physProps.driverVersion < VK_MAKE_VERSION(512, 622, 0))
+    {
+      bdaBrokenDriver = true;
+      qualcommLeakingUBOOffsets = true;
+    }
   }
 }
 

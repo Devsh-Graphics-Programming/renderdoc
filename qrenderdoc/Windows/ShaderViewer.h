@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,7 @@
 
 #include <QFrame>
 #include <QSemaphore>
+#include <QStyledItemDelegate>
 #include "Code/Interface/QRDInterface.h"
 
 namespace Ui
@@ -67,6 +68,34 @@ struct AccessedResourceData
 {
   ShaderVariable resource;
   rdcarray<size_t> steps;
+};
+
+enum class WatchVarState : int
+{
+  Invalid = 0,
+  Valid = 1,
+  Stale = 2,
+};
+
+struct VariableTag
+{
+  VariableTag() = default;
+  VariableTag(DebugVariableType type, rdcstr name)
+  {
+    debugVarType = type;
+    absoluteRefPath = name;
+  }
+  uint32_t offset = 0;
+
+  WatchVarState state = WatchVarState::Invalid;
+
+  bool matrix = false;
+  bool expanded = false;
+  bool globalSourceVar = false;
+  int32_t sourceVarIdx = -1;
+
+  DebugVariableType debugVarType = DebugVariableType::Undefined;
+  rdcstr absoluteRefPath;
 };
 
 class ShaderViewer : public QFrame, public IShaderViewer, public ICaptureViewer
@@ -149,7 +178,7 @@ private slots:
   void on_resources_sortByStep_clicked();
   void on_resources_sortByResource_clicked();
 
-  void on_watch_itemChanged(QTableWidgetItem *item);
+  void on_watch_itemChanged(RDTreeWidgetItem *item, int column);
 
   // manual slots
   void readonly_keyPressed(QKeyEvent *event);
@@ -166,12 +195,7 @@ private slots:
   void performReplace();
   void performReplaceAll();
 
-  void snippet_textureDimensions();
-  void snippet_selectedMip();
-  void snippet_selectedSlice();
-  void snippet_selectedSample();
-  void snippet_selectedRange();
-  void snippet_selectedType();
+  void snippet_constants();
   void snippet_samplers();
   void snippet_resources();
 
@@ -211,7 +235,7 @@ private:
 
   ShaderEncoding currentEncoding();
 
-  QString m_TooltipName;
+  QString m_TooltipVarPath;
   int m_TooltipVarIndex = -1;
   int m_TooltipMember = -1;
   QPoint m_TooltipPos;
@@ -236,10 +260,12 @@ private:
   ScintillaEdit *m_FindResults = NULL;
   QList<ScintillaEdit *> m_Scintillas;
 
-  // a map per file, from line number to instruction indices
-  QVector<QMap<int32_t, QVector<size_t>>> m_Line2Insts;
+  // a map, from a source location to a list of instruction blocks with that location.
+  // not every instruction with the instruction will be mapped to, only the first in each contiguous
+  // run
+  QMap<LineColumnInfo, rdcarray<uint32_t>> m_Location2Inst;
 
-  // a vector for the disassembly
+  // a vector for the disassembly with the instruction index for each disassembly line
   QVector<int32_t> m_AsmLine2Inst;
 
   ScintillaEdit *m_CurInstructionScintilla = NULL;
@@ -271,6 +297,7 @@ private:
   bool m_Saved = false;
 
   ShaderDebugTrace *m_Trace = NULL;
+  size_t m_FirstSourceStateIdx = ~0U;
   rdcarray<ShaderDebugState> m_States;
   size_t m_CurrentStateIdx = 0;
   rdcarray<ShaderVariable> m_Variables;
@@ -326,11 +353,16 @@ private:
   const ShaderDebugState &GetNextState() const;
 
   void updateDebugState();
+  void markWatchStale(RDTreeWidgetItem *item);
+  bool updateWatchVariable(RDTreeWidgetItem *watchItem, const RDTreeWidgetItem *varItem,
+                           const rdcstr &path, uint32_t swizzle, const ShaderVariable &var,
+                           QChar regcast);
   void updateWatchVariables();
+
   void updateAccessedResources();
 
-  RDTreeWidgetItem *makeSourceVariableNode(const ShaderVariable &var, const rdcstr &sourcePath,
-                                           const rdcstr &debugVarPath, bool modified);
+  RDTreeWidgetItem *makeSourceVariableNode(const ShaderVariable &var, const rdcstr &debugVarPath,
+                                           bool modified, VariableTag baseTag);
   RDTreeWidgetItem *makeSourceVariableNode(const SourceVariableMapping &l, int globalVarIdx,
                                            int localVarIdx, bool modified);
   RDTreeWidgetItem *makeDebugVariableNode(const ShaderVariable &v, rdcstr prefix, bool modified);
@@ -354,8 +386,8 @@ private:
   bool step(bool forward, StepMode mode);
 
   void runToCursor(bool forward);
-  void runTo(QVector<size_t> runToInstructions, bool forward,
-             ShaderEvents condition = ShaderEvents::NoEvent);
+  void runTo(const rdcarray<uint32_t> &runToInstructions, bool forward, ShaderEvents condition);
+  void runTo(uint32_t runToInstruction, bool forward, ShaderEvents condition = ShaderEvents::NoEvent);
 
   void runToResourceAccess(bool forward, VarType type, const BindpointIndex &resource);
 
@@ -365,9 +397,14 @@ private:
   QString stringRep(const ShaderVariable &var, uint32_t row = 0);
   QString samplerRep(Bindpoint bind, uint32_t arrayIndex, ResourceId id);
   void combineStructures(RDTreeWidgetItem *root, int skipPrefixLength = 0);
-  RDTreeWidgetItem *findVarInTree(RDTreeWidgetItem *root, QString name, bool fullmatch, int maxDepth);
   void highlightMatchingVars(RDTreeWidgetItem *root, const QString varName,
                              const QColor highlightColor);
-  bool findVar(QString name, ShaderVariable *var = NULL);
-  bool getVar(RDTreeWidgetItem *item, ShaderVariable *var, QString *regNames);
+
+  QString getRegNames(const RDTreeWidgetItem *item, uint32_t swizzle, uint32_t child = ~0U);
+  const RDTreeWidgetItem *evaluateVar(const RDTreeWidgetItem *item, uint32_t swizzle,
+                                      ShaderVariable *var);
+  const RDTreeWidgetItem *getVarFromPath(const rdcstr &path, const RDTreeWidgetItem *root,
+                                         ShaderVariable *var, uint32_t *swizzle);
+  const RDTreeWidgetItem *getVarFromPath(const rdcstr &path, ShaderVariable *var = NULL,
+                                         uint32_t *swizzle = NULL);
 };

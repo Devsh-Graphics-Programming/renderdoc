@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2021 Baldur Karlsson
+ * Copyright (c) 2020-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -295,7 +295,7 @@ ShaderVariable Determinant(ThreadState &state, uint32_t, const rdcarray<Id> &par
     if(!warned)
     {
       warned = true;
-      RDCLOG("Calculating determinant in floats instead of %s", ToStr(m.type).c_str());
+      RDCLOG("Calculating determinant at float precision instead of %s", ToStr(m.type).c_str());
     }
 
     for(uint8_t c = 0; c < m.rows * m.columns; c++)
@@ -346,7 +346,7 @@ ShaderVariable MatrixInverse(ThreadState &state, uint32_t, const rdcarray<Id> &p
     if(!warned)
     {
       warned = true;
-      RDCLOG("Calculating determinant in floats instead of %s", ToStr(m.type).c_str());
+      RDCLOG("Calculating matrix inverse at float precision instead of %s", ToStr(m.type).c_str());
     }
 
     for(uint8_t c = 0; c < m.rows * m.columns; c++)
@@ -415,7 +415,7 @@ ShaderVariable ModfStruct(ThreadState &state, uint32_t, const rdcarray<Id> &para
   ShaderVariable ret;
   ret.rows = 1;
   ret.columns = 1;
-  ret.isStruct = true;
+  ret.type = VarType::Struct;
   ret.members = {var, var};
   ret.members[0].name = "_child0";
   ret.members[1].name = "_child1";
@@ -788,7 +788,7 @@ ShaderVariable FrexpStruct(ThreadState &state, uint32_t, const rdcarray<Id> &par
   ShaderVariable ret;
   ret.rows = 1;
   ret.columns = 1;
-  ret.isStruct = true;
+  ret.type = VarType::Struct;
   ret.members = {var, var};
   ret.members[0].name = "_child0";
   ret.members[1].name = "_child1";

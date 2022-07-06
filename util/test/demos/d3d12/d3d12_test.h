@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2021 Baldur Karlsson
+* Copyright (c) 2019-2022 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -236,6 +236,7 @@ struct D3D12GraphicsTest : public GraphicsTest
   D3D12_FEATURE_DATA_D3D12_OPTIONS5 opts5 = {};
   D3D12_FEATURE_DATA_D3D12_OPTIONS6 opts6 = {};
   D3D12_FEATURE_DATA_D3D12_OPTIONS7 opts7 = {};
+  D3D_SHADER_MODEL m_HighestShaderModel = D3D_SHADER_MODEL_5_1;
 
   ID3D12FencePtr m_GPUSyncFence;
   HANDLE m_GPUSyncHandle = NULL;

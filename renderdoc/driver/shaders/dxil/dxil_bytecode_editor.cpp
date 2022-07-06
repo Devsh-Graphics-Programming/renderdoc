@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021 Baldur Karlsson
+ * Copyright (c) 2021-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -497,7 +497,7 @@ ProgramEditor::~ProgramEditor()
   // replace the DXIL bytecode in the container with
   DXBC::DXBCContainer::ReplaceChunk(m_OutBlob, DXBC::FOURCC_DXIL, EncodeProgram());
 
-#if ENABLED(RDOC_DEVEL)
+#if ENABLED(RDOC_DEVEL) && 0
   // on debug builds, run through dxil for "validation" if it's available.
   // we need BOTH of htese because dxil.dll's interface is incomplete, it lacks the library
   // functionality that we only need to create blobs
@@ -720,6 +720,34 @@ Metadata *ProgramEditor::AddMetadata(const Metadata &m)
 
   m_Metadata.push_back(m);
   return &m_Metadata.back();
+}
+
+NamedMetadata *ProgramEditor::AddNamedMetadata(const NamedMetadata &m)
+{
+  if(m.dwarf || m.debugLoc)
+  {
+    RDCERR("Metadata with debug information is not supported");
+    return NULL;
+  }
+
+  // check that inner pointers are valid
+  if(m.type && !IN_ARRAY(m_Types, m.type) && !IN_ARRAY(m_OldTypes, m.type))
+  {
+    RDCERR("Metadata references invalid type");
+    return NULL;
+  }
+
+  for(const Metadata *c : m.children)
+  {
+    if(c && !IN_ARRAY(m_Metadata, c) && !IN_ARRAY(m_OldMetadata, c))
+    {
+      RDCERR("New metadata references invalid member metadata");
+      return NULL;
+    }
+  }
+
+  m_NamedMeta.push_back(m);
+  return &m_NamedMeta.back();
 }
 
 const Constant *ProgramEditor::GetOrAddConstant(const Constant &c)
@@ -1020,7 +1048,7 @@ bytebuf ProgramEditor::EncodeProgram() const
       }
       else if(m_Types[i].type == Type::Struct)
       {
-        if(m_Types[i].members.empty())
+        if(m_Types[i].opaque)
         {
           writer.Record(LLVMBC::TypeRecord::OPAQUE);
         }
@@ -1135,7 +1163,7 @@ bytebuf ProgramEditor::EncodeProgram() const
   for(size_t i = 0; i < m_Functions.size(); i++)
   {
     const Function &f = m_Functions[i];
-    uint64_t typeIndex = getTypeID(f.funcType->inner);
+    uint64_t typeIndex = getTypeID(f.funcType);
 
     RDCASSERT((size_t)typeIndex < m_Types.size());
 
@@ -1357,7 +1385,7 @@ bytebuf ProgramEditor::EncodeProgram() const
           vals.push_back(flags);
           if(inst.opFlags != InstructionFlags::NoFlags)
             vals.push_back((uint64_t)inst.opFlags);
-          vals.push_back(getTypeID(inst.funcCall->funcType->inner));
+          vals.push_back(getTypeID(inst.funcCall->funcType));
           encodeRelativeValueID(Value(inst.funcCall));
           for(size_t a = 0; a < inst.args.size(); a++)
           {
@@ -1974,28 +2002,40 @@ void ProgramEditor::RegisterUAV(DXILResourceType type, uint32_t space, uint32_t 
     if(cur >= end)
       return;
 
-    uint32_t *resourceBindSize = (uint32_t *)cur;
-    cur += sizeof(uint32_t);
-    if(cur >= end)
-      return;
-
-    // fortunately UAVs are the last entry so we don't need to walk the list to insert in the right
-    // place, we can just add it at the end
-    cur += (*resourceBindSize) * (*numResources);
-    if(cur >= end)
-      return;
-
-    // add an extra resource
-    (*numResources)++;
-
-    if(*resourceBindSize == sizeof(ResourceBind1) || *resourceBindSize == sizeof(ResourceBind0))
+    if(*numResources > 0)
     {
-      psv0blob.insert(cur - begin, (byte *)&bind, *resourceBindSize);
+      uint32_t *resourceBindSize = (uint32_t *)cur;
+      cur += sizeof(uint32_t);
+      if(cur >= end)
+        return;
+
+      // fortunately UAVs are the last entry so we don't need to walk the list to insert in the
+      // right place, we can just add it at the end
+      cur += (*resourceBindSize) * (*numResources);
+      if(cur >= end)
+        return;
+
+      // add an extra resource
+      (*numResources)++;
+
+      if(*resourceBindSize == sizeof(ResourceBind1) || *resourceBindSize == sizeof(ResourceBind0))
+      {
+        psv0blob.insert(cur - begin, (byte *)&bind, *resourceBindSize);
+      }
+      else
+      {
+        RDCERR("Unexpected resource bind size %u", *resourceBindSize);
+        return;
+      }
     }
     else
     {
-      RDCERR("Unexpected resource bind size %u", *resourceBindSize);
-      return;
+      // If there is no resource in the chunk we also need to insert the size of a resource bind
+      *numResources = 1;
+      size_t insertOffset = cur - begin;
+      uint32_t resourceBindSize = sizeof(ResourceBind1);
+      psv0blob.insert(insertOffset, (byte *)&resourceBindSize, sizeof(resourceBindSize));
+      psv0blob.insert(insertOffset + sizeof(resourceBindSize), (byte *)&bind, resourceBindSize);
     }
 
     DXBC::DXBCContainer::ReplaceChunk(m_OutBlob, DXBC::FOURCC_PSV0, psv0blob);

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -187,14 +187,14 @@ void RemoteHost::CheckStatus()
 {
 }
 
-ReplayStatus RemoteHost::Connect(IRemoteServer **server)
+ResultDetails RemoteHost::Connect(IRemoteServer **server)
 {
-  return ReplayStatus::Succeeded;
+  return {ResultCode::Succeeded};
 }
 
-ReplayStatus RemoteHost::Launch()
+ResultDetails RemoteHost::Launch()
 {
-  return ReplayStatus::Succeeded;
+  return {ResultCode::Succeeded};
 }
 
 bool RemoteHost::IsServerRunning() const

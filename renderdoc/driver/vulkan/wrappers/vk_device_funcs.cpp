@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -202,8 +202,8 @@ static void StripUnwantedExtensions(rdcarray<rdcstr> &Extensions)
   });
 }
 
-ReplayStatus WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVersion,
-                                       const ReplayOptions &opts)
+RDResult WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVersion,
+                                   const ReplayOptions &opts)
 {
   m_InitParams = params;
   m_SectionVersion = sectionVersion;
@@ -331,8 +331,9 @@ ReplayStatus WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVer
   {
     if(supportedExtensions.find(params.Extensions[i]) == supportedExtensions.end())
     {
-      RDCERR("Capture requires extension '%s' which is not supported", params.Extensions[i].c_str());
-      return ReplayStatus::APIHardwareUnsupported;
+      RETURN_ERROR_RESULT(ResultCode::APIHardwareUnsupported,
+                          "Capture requires extension '%s' which is not supported",
+                          params.Extensions[i].c_str());
     }
   }
 
@@ -418,6 +419,8 @@ ReplayStatus WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVer
   if(params.APIVersion >= VK_API_VERSION_1_0)
     renderdocAppInfo.apiVersion = params.APIVersion;
 
+  m_EnabledExtensions.vulkanVersion = renderdocAppInfo.apiVersion;
+
   if(!Vulkan_Debug_ReplaceAppInfo())
   {
     // if we're not replacing the app info, set renderdocAppInfo's parameters to the ones from the
@@ -449,8 +452,8 @@ ReplayStatus WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVer
 
   if(ret != VK_SUCCESS)
   {
-    RDCLOG("Instance creation returned %s", ToStr(ret).c_str());
-    return ReplayStatus::APIHardwareUnsupported;
+    RETURN_ERROR_RESULT(ResultCode::APIHardwareUnsupported, "Vulkan instance creation returned %s",
+                        ToStr(ret).c_str());
   }
 
   RDCASSERTEQUAL(ret, VK_SUCCESS);
@@ -514,7 +517,10 @@ ReplayStatus WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVer
   CheckVkResult(vkr);
 
   if(count == 0)
-    return ReplayStatus::APIHardwareUnsupported;
+  {
+    RETURN_ERROR_RESULT(ResultCode::APIHardwareUnsupported,
+                        "No physical devices exist in this vulkan instance");
+  }
 
   m_ReplayPhysicalDevices.resize(count);
   m_ReplayPhysicalDevicesUsed.resize(count);
@@ -532,7 +538,7 @@ ReplayStatus WrappedVulkan::Initialise(VkInitParams &params, uint64_t sectionVer
     LoadLibraryA("nvoglv64.dll");
 #endif
 
-  return ReplayStatus::Succeeded;
+  return ResultCode::Succeeded;
 }
 
 VkResult WrappedVulkan::vkCreateInstance(const VkInstanceCreateInfo *pCreateInfo,
@@ -1547,7 +1553,9 @@ bool WrappedVulkan::SelectGraphicsComputeQueue(const rdcarray<VkQueueFamilyPrope
 
     if(!found)
     {
-      RDCERR("Can't add a queue with required properties for RenderDoc! Unsupported configuration");
+      SET_ERROR_RESULT(
+          m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
+          "Can't add a queue with required properties for RenderDoc! Unsupported configuration");
       return false;
     }
 
@@ -1662,8 +1670,9 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
     {
       if(supportedExtensions.find(Extensions[i]) == supportedExtensions.end())
       {
-        m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
-        RDCERR("Capture requires extension '%s' which is not supported", Extensions[i].c_str());
+        SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
+                         "Capture requires extension '%s' which is not supported",
+                         Extensions[i].c_str());
         return false;
       }
     }
@@ -2048,7 +2057,9 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
     if(!SelectGraphicsComputeQueue(queueProps, createInfo, qFamilyIdx))
     {
-      RDCERR("Can't add a queue with required properties for RenderDoc! Unsupported configuration");
+      SET_ERROR_RESULT(
+          m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
+          "Can't add a queue with required properties for RenderDoc! Unsupported configuration");
       return false;
     }
 
@@ -2089,12 +2100,13 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
     VkPhysicalDeviceFeatures availFeatures = {0};
     ObjDisp(physicalDevice)->GetPhysicalDeviceFeatures(Unwrap(physicalDevice), &availFeatures);
 
-#define CHECK_PHYS_FEATURE(feature)                                                           \
-  if(enabledFeatures.feature && !availFeatures.feature)                                       \
-  {                                                                                           \
-    m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;                              \
-    RDCERR("Capture requires physical device feature '" #feature "' which is not supported"); \
-    return false;                                                                             \
+#define CHECK_PHYS_FEATURE(feature)                                            \
+  if(enabledFeatures.feature && !availFeatures.feature)                        \
+  {                                                                            \
+    SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIHardwareUnsupported, \
+                     "Capture requires physical device feature '" #feature     \
+                     "' which is not supported");                              \
+    return false;                                                              \
   }
 
     CHECK_PHYS_FEATURE(robustBufferAccess);
@@ -2164,18 +2176,20 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
 #define END_PHYS_EXT_CHECK() }
 
-#define CHECK_PHYS_EXT_FEATURE(feature)                          \
-  if(ext->feature && !avail.feature)                             \
-  {                                                              \
-    m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported; \
-    RDCERR("Capture requires physical device feature '" #feature \
-           "' in struct '%s' which is not supported",            \
-           structName);                                          \
-    return false;                                                \
+#define CHECK_PHYS_EXT_FEATURE(feature)                                        \
+  if(ext->feature && !avail.feature)                                           \
+  {                                                                            \
+    SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIHardwareUnsupported, \
+                     "Capture requires physical device feature '" #feature     \
+                     "' in struct '%s' which is not supported",                \
+                     structName);                                              \
+    return false;                                                              \
   }
 
     VkPhysicalDeviceDescriptorIndexingFeatures descIndexingFeatures = {};
     VkPhysicalDeviceVulkan12Features vulkan12Features = {};
+    VkPhysicalDeviceVulkan13Features vulkan13Features = {};
+    VkPhysicalDeviceSynchronization2Features sync2 = {};
 
     if(ObjDisp(physicalDevice)->GetPhysicalDeviceFeatures2)
     {
@@ -2254,8 +2268,8 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
         if(ext->bufferDeviceAddress && !avail.bufferDeviceAddressCaptureReplay)
         {
-          m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
-          RDCERR(
+          SET_ERROR_RESULT(
+              m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
               "Capture requires bufferDeviceAddress support, which is available, but "
               "bufferDeviceAddressCaptureReplay support is not available which is required to "
               "replay");
@@ -2267,6 +2281,8 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
       BEGIN_PHYS_EXT_CHECK(VkPhysicalDeviceVulkan13Features,
                            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES);
       {
+        vulkan13Features = *ext;
+
         CHECK_PHYS_EXT_FEATURE(robustImageAccess);
         CHECK_PHYS_EXT_FEATURE(inlineUniformBlock);
         CHECK_PHYS_EXT_FEATURE(descriptorBindingInlineUniformBlockUpdateAfterBind);
@@ -2340,6 +2356,14 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
                            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_2_FEATURES_EXT);
       {
         CHECK_PHYS_EXT_FEATURE(fragmentDensityMapDeferred);
+      }
+      END_PHYS_EXT_CHECK();
+
+      BEGIN_PHYS_EXT_CHECK(
+          VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM,
+          VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_OFFSET_FEATURES_QCOM);
+      {
+        CHECK_PHYS_EXT_FEATURE(fragmentDensityMapOffset);
       }
       END_PHYS_EXT_CHECK();
 
@@ -2450,8 +2474,8 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
         if(ext->bufferDeviceAddress && !avail.bufferDeviceAddressCaptureReplay)
         {
-          m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
-          RDCERR(
+          SET_ERROR_RESULT(
+              m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
               "Capture requires bufferDeviceAddress support, which is available, but "
               "bufferDeviceAddressCaptureReplay support is not available which is required to "
               "replay");
@@ -2469,8 +2493,8 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
         if(ext->bufferDeviceAddress && !avail.bufferDeviceAddressCaptureReplay)
         {
-          m_FailedReplayStatus = ReplayStatus::APIHardwareUnsupported;
-          RDCERR(
+          SET_ERROR_RESULT(
+              m_FailedReplayResult, ResultCode::APIHardwareUnsupported,
               "Capture requires bufferDeviceAddress support, which is available, but "
               "bufferDeviceAddressCaptureReplay support is not available which is required to "
               "replay");
@@ -2762,6 +2786,8 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
       BEGIN_PHYS_EXT_CHECK(VkPhysicalDeviceSynchronization2Features,
                            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES);
       {
+        sync2 = *ext;
+
         CHECK_PHYS_EXT_FEATURE(synchronization2);
       }
       END_PHYS_EXT_CHECK();
@@ -2856,6 +2882,13 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
       }
       END_PHYS_EXT_CHECK();
 
+      BEGIN_PHYS_EXT_CHECK(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
+                           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT);
+      {
+        CHECK_PHYS_EXT_FEATURE(graphicsPipelineLibrary);
+      }
+      END_PHYS_EXT_CHECK();
+
       BEGIN_PHYS_EXT_CHECK(VkPhysicalDeviceDynamicRenderingFeatures,
                            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES);
       {
@@ -2875,6 +2908,19 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
                            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES);
       {
         CHECK_PHYS_EXT_FEATURE(textureCompressionASTC_HDR);
+      }
+      END_PHYS_EXT_CHECK();
+
+      BEGIN_PHYS_EXT_CHECK(VkPhysicalDeviceFragmentShadingRateFeaturesKHR,
+                           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR);
+      {
+        CHECK_PHYS_EXT_FEATURE(pipelineFragmentShadingRate);
+        CHECK_PHYS_EXT_FEATURE(primitiveFragmentShadingRate);
+        CHECK_PHYS_EXT_FEATURE(attachmentFragmentShadingRate);
+
+        m_FragmentShadingRate = (ext->pipelineFragmentShadingRate != VK_FALSE) ||
+                                (ext->primitiveFragmentShadingRate != VK_FALSE) ||
+                                (ext->attachmentFragmentShadingRate != VK_FALSE);
       }
       END_PHYS_EXT_CHECK();
     }
@@ -3171,7 +3217,7 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR,
     };
 
-    if(physProps.apiVersion >= VK_MAKE_VERSION(1, 2, 0))
+    if(RDCMIN(m_EnabledExtensions.vulkanVersion, physProps.apiVersion) >= VK_MAKE_VERSION(1, 2, 0))
     {
       VkPhysicalDeviceVulkan12Features avail12Features = {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
@@ -3356,7 +3402,8 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
     if(vkr != VK_SUCCESS)
     {
-      RDCERR("Failed to create logical device: %s", ToStr(vkr).c_str());
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Error creating logical device, VkResult: %s", ToStr(vkr).c_str());
       return false;
     }
 
@@ -3376,11 +3423,13 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
 
     CheckDeviceExts();
 
+    uint32_t effectiveApiVersion = RDCMIN(m_EnabledExtensions.vulkanVersion, physProps.apiVersion);
+
 #undef CheckExt
-#define CheckExt(name, ver)                                                                      \
-  if(!strcmp(createInfo.ppEnabledExtensionNames[i], "VK_" #name) || physProps.apiVersion >= ver) \
-  {                                                                                              \
-    m_EnabledExtensions.ext_##name = true;                                                       \
+#define CheckExt(name, ver)                                                                     \
+  if(!strcmp(createInfo.ppEnabledExtensionNames[i], "VK_" #name) || effectiveApiVersion >= ver) \
+  {                                                                                             \
+    m_EnabledExtensions.ext_##name = true;                                                      \
   }
 
     for(uint32_t i = 0; i < createInfo.enabledExtensionCount; i++)
@@ -3391,7 +3440,7 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
     // for cases where a promoted extension isn't supported as the extension itself, manually
     // disable them when the feature bit is false.
 
-    if(physProps.apiVersion >= VK_MAKE_VERSION(1, 2, 0))
+    if(effectiveApiVersion >= VK_MAKE_VERSION(1, 2, 0))
     {
       if(supportedExtensions.find(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) ==
              supportedExtensions.end() &&
@@ -3417,6 +3466,15 @@ bool WrappedVulkan::Serialise_vkCreateDevice(SerialiserType &ser, VkPhysicalDevi
             "Required feature 'separateDepthStencilLayouts' not supported by 1.2 physical device.");
         m_EnabledExtensions.ext_KHR_separate_depth_stencil_layouts = false;
       }
+    }
+
+    // we also need to check for feature enablement - if an extension is promoted that doesn't mean
+    // it's enabled
+
+    if(m_EnabledExtensions.ext_KHR_synchronization2)
+    {
+      if(!vulkan13Features.synchronization2 && !sync2.synchronization2)
+        m_EnabledExtensions.ext_KHR_synchronization2 = false;
     }
 
     InitInstanceExtensionTables(m_Instance, &m_EnabledExtensions);

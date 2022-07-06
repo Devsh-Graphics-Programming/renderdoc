@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021 Baldur Karlsson
+ * Copyright (c) 2021-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -42,6 +42,7 @@ DummyDriver::DummyDriver(IReplayDriver *original, const rdcarray<ShaderReflectio
   m_GPUs = original->GetAvailableGPUs();
   m_WindowSystems = original->GetSupportedWindowSystems();
   m_CustomEncodings = original->GetCustomShaderEncodings();
+  m_CustomPrefixes = original->GetCustomShaderSourcePrefixes();
 }
 
 DummyDriver::~DummyDriver()
@@ -147,9 +148,9 @@ FrameRecord DummyDriver::GetFrameRecord()
   return m_FrameRecord;
 }
 
-ReplayStatus DummyDriver::ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
+RDResult DummyDriver::ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
 {
-  return ReplayStatus::APIReplayFailed;
+  return ResultCode::APIReplayFailed;
 }
 
 void DummyDriver::ReplayLog(uint32_t endEventID, ReplayLogType replayType)
@@ -313,9 +314,9 @@ bool DummyDriver::IsRemoteProxy()
   return m_Proxy;
 }
 
-ReplayStatus DummyDriver::FatalErrorCheck()
+RDResult DummyDriver::FatalErrorCheck()
 {
-  return ReplayStatus::Succeeded;
+  return ResultCode::Succeeded;
 }
 
 IReplayDriver *DummyDriver::MakeDummyDriver()
@@ -478,7 +479,12 @@ void DummyDriver::BuildCustomShader(ShaderEncoding sourceEncoding, const bytebuf
 
 rdcarray<ShaderEncoding> DummyDriver::GetCustomShaderEncodings()
 {
-  return {ShaderEncoding::HLSL, ShaderEncoding::GLSL};
+  return m_CustomEncodings;
+}
+
+rdcarray<ShaderSourcePrefix> DummyDriver::GetCustomShaderSourcePrefixes()
+{
+  return m_CustomPrefixes;
 }
 
 ResourceId DummyDriver::ApplyCustomShader(TextureDisplay &display)

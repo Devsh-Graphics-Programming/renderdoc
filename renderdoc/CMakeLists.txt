@@ -37,6 +37,11 @@ elseif(APPLE)
         find_library(OPENGL_LIBRARY OpenGL)
         list(APPEND RDOC_LIBRARIES PRIVATE ${OPENGL_LIBRARY})
     endif()
+
+    if(ENABLE_METAL)
+        find_library(METAL_LIBRARY Metal)
+        list(APPEND RDOC_LIBRARIES PRIVATE ${METAL_LIBRARY})
+    endif()
 elseif(ENABLE_GGP)
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
@@ -123,6 +128,7 @@ set(sources
     common/dds_readwrite.h
     common/formatting.h
     common/globalconfig.h
+    common/result.h
     common/shader_cache.h
     common/threading.h
     common/timing.h
@@ -441,6 +447,10 @@ set(data
     data/glsl/deptharr2ms.frag
     data/glsl/depthms2arr.frag
     data/glsl/discard.frag
+    data/glsl/vk_ms2buffer.comp
+    data/glsl/vk_depthms2buffer.comp
+    data/glsl/vk_buffer2ms.comp
+    data/glsl/vk_depthbuf2ms.frag
     data/sourcecodepro.ttf
     driver/vulkan/renderdoc.json)
 
@@ -485,6 +495,11 @@ if(UNIX)
 endif()
 
 set(renderdoc_objects)
+
+if(ENABLE_METAL)
+    add_subdirectory(driver/metal)
+    list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_metal>)
+endif()
 
 if(ENABLE_GL OR ENABLE_GLES)
     add_subdirectory(driver/gl)

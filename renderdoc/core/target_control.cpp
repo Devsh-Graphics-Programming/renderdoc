@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -152,6 +152,8 @@ void RenderDoc::TargetControlClientThread(uint32_t version, Network::Socket *cli
   const int progresstime = 100;    // update capture progress every 100ms
   int curtime = 0;
 
+  RenderDoc::Inst().ValidateCaptures();
+
   rdcarray<CaptureData> captures;
   rdcarray<rdcpair<uint32_t, uint32_t> > children;
   std::map<RDCDriver, bool> drivers;
@@ -222,7 +224,7 @@ void RenderDoc::TargetControlClientThread(uint32_t version, Network::Socket *cli
       bytebuf buf;
 
       ICaptureFile *file = RENDERDOC_OpenCaptureFile();
-      if(file->OpenFile(captures.back().path, "rdc", NULL) == ReplayStatus::Succeeded)
+      if(file->OpenFile(captures.back().path, "rdc", NULL).OK())
       {
         buf = file->GetThumbnail(FileType::JPG, 0).data;
       }
@@ -945,6 +947,18 @@ extern "C" RENDERDOC_API ITargetControl *RENDERDOC_CC RENDERDOC_CreateTargetCont
 
     port = protocol->RemapPort(deviceID, port);
   }
+  else
+  {
+    int32_t idx = deviceID.indexOf(':');
+    if(idx > 0)
+    {
+      host = deviceID.substr(0, idx);
+      port = atoi(deviceID.substr(idx + 1).c_str()) & 0xffff;
+    }
+  }
+
+  if(port == 0)
+    return NULL;
 
   Network::Socket *sock = Network::CreateClientSocket(host, port, 750);
 

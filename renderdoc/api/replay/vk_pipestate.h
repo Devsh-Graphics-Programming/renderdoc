@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -352,8 +352,18 @@ struct Pipeline
 
   DOCUMENT("The :class:`ResourceId` of the pipeline object.");
   ResourceId pipelineResourceId;
-  DOCUMENT("The :class:`ResourceId` of the pipeline layout object.");
-  ResourceId pipelineLayoutResourceId;
+  DOCUMENT("The :class:`ResourceId` of the compute pipeline layout object.");
+  ResourceId pipelineComputeLayoutResourceId;
+  DOCUMENT(R"(The :class:`ResourceId` of the pre-rasterization pipeline layout object.
+
+When not using pipeline libraries, this will be identical to :data:`pipelineFragmentLayoutResourceId`.
+)");
+  ResourceId pipelinePreRastLayoutResourceId;
+  DOCUMENT(R"(The :class:`ResourceId` of the fragment pipeline layout object.
+
+When not using pipeline libraries, this will be identical to :data:`pipelinePreRastLayoutResourceId`.
+)");
+  ResourceId pipelineFragmentLayoutResourceId;
   DOCUMENT("The flags used to create the pipeline object.");
   uint32_t flags = 0;
 
@@ -586,6 +596,14 @@ value.
 :type: bytes
 )");
   bytebuf specializationData;
+
+  DOCUMENT(R"(The specialization constant ID for each entry in the specialization constant block of
+reflection info. This corresponds to the constantID in VkSpecializationMapEntry, while the offset
+and size into specializationData can be obtained from the reflection info.
+
+:type: List[int]
+)")
+  rdcarray<uint32_t> specializationIds;
 };
 
 DOCUMENT("Describes the state of the fixed-function tessellator.");
@@ -824,6 +842,29 @@ See :data:`conservativeRasterizationMode`
   uint32_t lineStippleFactor = 0;
   DOCUMENT("The line stipple bit-pattern.");
   uint16_t lineStipplePattern = 0;
+  DOCUMENT(R"(The current pipeline fragment shading rate. This will always be 1x1 when a fragment
+shading rate has not been specified.
+
+:type: Tuple[int,int]
+)");
+  rdcpair<uint32_t, uint32_t> pipelineShadingRate = {1, 1};
+  DOCUMENT(R"(The fragment shading rate combiners.
+
+The combiners are applied as follows, according to the Vulkan spec:
+
+  ``intermediateRate = combiner[0] ( pipelineShadingRate,  shaderExportedShadingRate )``
+  ``finalRate        = combiner[1] ( intermediateRate,     imageBasedShadingRate     )``
+
+Where the first input is from :data:`pipelineShadingRate` and the second is the exported shading
+rate from the last pre-rasterization shader stage, which defaults to 1x1 if not exported.
+
+The intermediate result is then used as the first input to the second combiner, together with the
+shading rate sampled from the fragment shading rate attachment.
+
+:type: Tuple[ShadingRateCombiner,ShadingRateCombiner]
+)");
+  rdcpair<ShadingRateCombiner, ShadingRateCombiner> shadingRateCombiners = {
+      ShadingRateCombiner::Keep, ShadingRateCombiner::Keep};
 };
 
 DOCUMENT("Describes state of custom sample locations in the pipeline.");
@@ -979,12 +1020,44 @@ attachments.
 If there is no depth-stencil attachment, this index is ``-1``.
 )");
   int32_t depthstencilAttachment = -1;
+  DOCUMENT(R"(An index into the framebuffer attachments for the depth-stencil resolve attachment.
+
+If there is no depth-stencil resolve attachment, this index is ``-1``.
+)");
+  int32_t depthstencilResolveAttachment = -1;
 
   DOCUMENT(R"(An index into the framebuffer attachments for the fragment density attachment.
 
 If there is no fragment density attachment, this index is ``-1``.
+
+.. note::
+  Only one at most of :data:`fragmentDensityAttachment` and :data:`shadingRateAttachment` will be
+  set.
 )");
   int32_t fragmentDensityAttachment = -1;
+
+  DOCUMENT(R"(An index into the framebuffer attachments for the fragment shading rate attachment.
+
+If there is no fragment shading rate attachment, this index is ``-1``.
+
+.. note::
+  Only one at most of :data:`fragmentDensityAttachment` and :data:`shadingRateAttachment` will be
+  set.
+)");
+  int32_t shadingRateAttachment = -1;
+
+  DOCUMENT(R"(The size of the framebuffer region represented by each texel in
+:data:`shadingRateAttachment`.
+
+For example if this is (2,2) then every texel in the attachment gives the shading rate of a 2x2
+block in the framebuffer so the shading rate attachment is half the size of the other attachments in
+each dimension.
+
+If no attachment is set in :data:`shadingRateAttachment` this will be (1,1).
+
+:type: Tuple[int,int]
+)");
+  rdcpair<uint32_t, uint32_t> shadingRateTexelSize = {1, 1};
 
   DOCUMENT(R"(If multiview is enabled, contains a list of view indices to be broadcast to during
 rendering.
@@ -994,6 +1067,15 @@ If the list is empty, multiview is disabled and rendering is as normal.
 :type: List[int]
 )");
   rdcarray<uint32_t> multiviews;
+
+  DOCUMENT(R"(If VK_QCOM_fragment_density_map_offset is enabled, contains a list of offsets applied 
+to the fragment density map during rendering.
+
+If the list is empty, fdm_offset is disabled and rendering is as normal.
+
+:type: List[Offset]
+)");
+  rdcarray<Offset> fragmentDensityOffsets;
 };
 
 DOCUMENT("Describes a single attachment in a framebuffer object.");

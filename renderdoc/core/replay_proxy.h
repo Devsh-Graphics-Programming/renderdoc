@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -142,12 +142,12 @@ public:
   void RemoteExecutionThreadEntry();
 
   bool IsRemoteProxy() { return !m_RemoteServer; }
-  ReplayStatus FatalErrorCheck();
+  RDResult FatalErrorCheck();
   IReplayDriver *MakeDummyDriver();
   void Shutdown() { delete this; }
-  ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
+  RDResult ReadLogInitialisation(RDCFile *rdc, bool storeStructuredBuffers)
   {
-    return ReplayStatus::Succeeded;
+    return ResultCode::Succeeded;
   }
   AMDRGPControl *GetRGPControl() { return NULL; }
   rdcarray<WindowingSystem> GetSupportedWindowSystems()
@@ -412,6 +412,14 @@ public:
     return {};
   }
 
+  rdcarray<ShaderSourcePrefix> GetCustomShaderSourcePrefixes()
+  {
+    if(m_Proxy)
+      return m_Proxy->GetCustomShaderSourcePrefixes();
+
+    return {};
+  }
+
   void FreeCustomShader(ResourceId id)
   {
     if(m_Proxy)
@@ -422,7 +430,12 @@ public:
   {
     if(m_Proxy)
     {
-      EnsureTexCached(display.resourceId, display.typeCast, display.subresource);
+      Subresource customShaderSubresource = display.subresource;
+      // fetch all subsamples in case the custom shader wants to fetch more than simply the active
+      // subsample
+      customShaderSubresource.sample = ~0U;
+
+      EnsureTexCached(display.resourceId, display.typeCast, customShaderSubresource);
 
       if(display.resourceId == ResourceId())
         return ResourceId();
@@ -697,7 +710,7 @@ private:
   Threading::ThreadHandle m_RemoteExecutionThread = 0;
 
   bool m_IsErrored = false;
-  ReplayStatus m_FatalError = ReplayStatus::Succeeded;
+  RDResult m_FatalError = ResultCode::Succeeded;
 
   FrameRecord m_FrameRecord;
   APIProperties m_APIProps;

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2021 Baldur Karlsson
+ * Copyright (c) 2020-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -217,6 +217,8 @@ struct ThreadState
   // the list of IDs that are currently valid and live
   rdcarray<Id> live;
 
+  std::map<Id, uint32_t> lastWrite;
+
   rdcarray<SourceVariableMapping> sourceVars;
 
   // index in the pixel quad
@@ -240,6 +242,44 @@ private:
   ShaderDebugState *m_State = NULL;
 };
 
+enum class DebugScope
+{
+  CompilationUnit,
+  Composite,
+  Function,
+  Block,
+};
+
+struct ScopeData
+{
+  DebugScope type;
+  ScopeData *parent;
+  uint32_t line;
+  uint32_t column;
+  int32_t fileIndex;
+  size_t end;
+
+  rdcstr name;
+
+  rdcarray<Id> locals;
+};
+
+struct InlineData
+{
+  ScopeData *scope;
+  InlineData *parent;
+};
+
+struct LocalData
+{
+  rdcstr name;
+  ScopeData *scope;
+
+  Id curId;
+};
+
+typedef rdcpair<Id, Id> LocalMapping;
+
 class Debugger : public Processor, public ShaderDebugger
 {
 public:
@@ -260,6 +300,8 @@ public:
   const DataType &GetType(Id typeId);
   const DataType &GetTypeForId(Id ssaId);
   const Decorations &GetDecorations(Id typeId);
+  bool IsDebugExtInstSet(Id id) const;
+  bool HasDebugInfo() const { return m_DebugInfo.valid; }
   rdcstr GetRawName(Id id) const;
   rdcstr GetHumanName(Id id);
   void AddSourceVars(rdcarray<SourceVariableMapping> &sourceVars, const ShaderVariable &var, Id id);
@@ -281,7 +323,7 @@ public:
   uint32_t GetNumInstructions() { return (uint32_t)instructionOffsets.size(); }
   GlobalState GetGlobal() { return global; }
   const rdcarray<Id> &GetLiveGlobals() { return liveGlobals; }
-  const rdcarray<SourceVariableMapping> &GetGlobalSourceVars() { return globalSourceVars; }
+  const rdcarray<SourceVariableMapping> &GetGlobalSourceVars();
   ThreadState &GetActiveLane() { return workgroup[activeLaneIndex]; }
   const ThreadState &GetActiveLane() const { return workgroup[activeLaneIndex]; }
 private:
@@ -298,6 +340,8 @@ private:
                         std::function<void(ShaderVarType &, const Decorations &, const DataType &,
                                            uint64_t, const rdcstr &)>
                             callback) const;
+
+  static Id ParseRawName(const rdcstr &name);
 
   void MakeSignatureNames(const rdcarray<SPIRVInterfaceAccess> &sigList, rdcarray<rdcstr> &sigNames);
 
@@ -357,6 +401,28 @@ private:
   std::set<rdcstr> usedNames;
   std::map<Id, rdcstr> dynamicNames;
   void CalcActiveMask(rdcarray<bool> &activeMask);
+
+  struct
+  {
+    bool valid = false;
+
+    SparseIdMap<ScopeData> scopes;
+    SparseIdMap<InlineData> inlined;
+    ScopeData *curScope = NULL;
+    InlineData *curInline = NULL;
+
+    rdcarray<Id> globals;
+    rdcarray<Id> constants;
+
+    SparseIdMap<LocalData> locals;
+
+    SparseIdMap<int32_t> sources;
+    SparseIdMap<rdcstr> filenames;
+
+    std::map<size_t, ScopeData *> lineScope;
+    std::map<size_t, InlineData *> lineInline;
+    std::map<size_t, LocalMapping> localMappings;
+  } m_DebugInfo;
 };
 
 // this does a 'safe' value assignment, by doing parallel depth-first iteration of both variables

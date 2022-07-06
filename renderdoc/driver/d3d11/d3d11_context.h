@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -214,7 +214,7 @@ private:
   uint32_t m_CurEventID, m_CurActionID;
   D3D11Chunk m_LastChunk;
 
-  ReplayStatus m_FailedReplayStatus = ReplayStatus::APIReplayFailed;
+  RDResult m_FailedReplayResult = ResultCode::APIReplayFailed;
 
   ActionDescription m_ParentAction;
   std::map<ResourceId, ActionDescription> m_CmdLists;
@@ -310,8 +310,7 @@ public:
 
   bool ProcessChunk(ReadSerialiser &ser, D3D11Chunk chunk);
   void ReplayFakeContext(ResourceId id);
-  ReplayStatus ReplayLog(CaptureState readType, uint32_t startEventID, uint32_t endEventID,
-                         bool partial);
+  RDResult ReplayLog(CaptureState readType, uint32_t startEventID, uint32_t endEventID, bool partial);
   void SetFrameReader(StreamReader *reader) { m_FrameReader = reader; }
   void MarkResourceReferenced(ResourceId id, FrameRefType refType);
 

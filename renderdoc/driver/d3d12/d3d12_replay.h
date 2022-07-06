@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -55,19 +55,35 @@ struct D3D12FeedbackBindIdentifier
   size_t rootEl;
   size_t rangeIndex;
   UINT descIndex;
+  ShaderStage shaderStage;    // Only used for direct access views
+  BindType bindType;          // Only used for direct access views
+  bool directAccess;
 
   bool operator<(const D3D12FeedbackBindIdentifier &o) const
   {
-    if(rootEl != o.rootEl)
-      return rootEl < o.rootEl;
-    if(rangeIndex != o.rangeIndex)
-      return rangeIndex < o.rangeIndex;
+    if(directAccess != o.directAccess)
+      return directAccess < o.directAccess;
+    if(!directAccess)
+    {
+      if(rootEl != o.rootEl)
+        return rootEl < o.rootEl;
+      if(rangeIndex != o.rangeIndex)
+        return rangeIndex < o.rangeIndex;
+    }
+    else
+    {
+      if(shaderStage != o.shaderStage)
+        return shaderStage < o.shaderStage;
+      if(bindType != o.bindType)
+        return bindType < o.bindType;
+    }
     return descIndex < o.descIndex;
   }
 
   bool operator==(const D3D12FeedbackBindIdentifier &o) const
   {
-    return rootEl == o.rootEl && rangeIndex == o.rangeIndex && descIndex == o.descIndex;
+    return rootEl == o.rootEl && rangeIndex == o.rangeIndex && descIndex == o.descIndex &&
+           directAccess == o.directAccess && shaderStage == o.shaderStage && bindType == o.bindType;
   }
 };
 
@@ -84,7 +100,7 @@ public:
   void Initialise(IDXGIFactory1 *factory);
   void Shutdown();
 
-  ReplayStatus FatalErrorCheck();
+  RDResult FatalErrorCheck();
   IReplayDriver *MakeDummyDriver();
 
   void CreateResources();
@@ -123,7 +139,7 @@ public:
   void FreeTargetResource(ResourceId id);
   void FreeCustomShader(ResourceId id);
 
-  ReplayStatus ReadLogInitialisation(RDCFile *rdc, bool readStructuredBuffers);
+  RDResult ReadLogInitialisation(RDCFile *rdc, bool readStructuredBuffers);
   void ReplayLog(uint32_t endEventID, ReplayLogType replayType);
   SDFile *GetStructuredFile();
 
@@ -175,6 +191,7 @@ public:
   {
     return {ShaderEncoding::DXBC, ShaderEncoding::HLSL};
   }
+  rdcarray<ShaderSourcePrefix> GetCustomShaderSourcePrefixes();
   rdcarray<ShaderEncoding> GetTargetShaderEncodings()
   {
     return {ShaderEncoding::DXBC, ShaderEncoding::HLSL};
@@ -244,6 +261,7 @@ private:
                         const ShaderBindpointMapping *mappings[(uint32_t)ShaderStage::Count],
                         rdcarray<D3D12Pipe::RootSignatureRange> &rootElements);
   void FillResourceView(D3D12Pipe::View &view, const D3D12Descriptor *desc);
+  void FillSampler(D3D12Pipe::Sampler &view, const D3D12_SAMPLER_DESC &desc);
 
   bool CreateSOBuffers();
   void ClearPostVSCache();

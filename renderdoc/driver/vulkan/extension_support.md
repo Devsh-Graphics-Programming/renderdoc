@@ -51,6 +51,7 @@ Maintainers can update this file by updating vk.xml in this folder and running `
 * `VK_EXT_full_screen_exclusive`
 * `VK_EXT_global_priority`
 * `VK_EXT_global_priority_query`
+* `VK_EXT_graphics_pipeline_library`
 * `VK_EXT_hdr_metadata`
 * `VK_EXT_headless_surface`
 * `VK_EXT_host_query_reset`
@@ -133,6 +134,7 @@ Maintainers can update this file by updating vk.xml in this folder and running `
 * `VK_KHR_external_semaphore_win32`
 * `VK_KHR_external_semaphore`
 * `VK_KHR_format_feature_flags2`
+* `VK_KHR_fragment_shading_rate`
 * `VK_KHR_get_display_properties2`
 * `VK_KHR_get_memory_requirements2`
 * `VK_KHR_get_physical_device_properties2`
@@ -148,6 +150,7 @@ Maintainers can update this file by updating vk.xml in this folder and running `
 * `VK_KHR_multiview`
 * `VK_KHR_performance_query`
 * `VK_KHR_pipeline_executable_properties`
+* `VK_KHR_pipeline_library`
 * `VK_KHR_present_id`
 * `VK_KHR_present_wait`
 * `VK_KHR_push_descriptor`
@@ -204,13 +207,14 @@ KHR extensions will definitely be implemented at some point, though KHR extensio
 
 ## KHR Extensions
 
-* `VK_KHR_fragment_shading_rate`
+* None currently.
 
 ## KHR Portability
 
 The portability subset is only relevant on mac, which is not a supported platform.
 
 * `VK_KHR_portability_subset`
+* `VK_KHR_portability_enumeration`
 
 ## KHR Ray tracing extensions
 
@@ -220,7 +224,6 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 * `VK_KHR_ray_tracing_pipeline`
 * `VK_KHR_ray_query`
 * `VK_KHR_deferred_host_operations`
-* `VK_KHR_pipeline_library`
 
 ## EXT Extensions
 
@@ -230,12 +233,14 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 * `VK_EXT_depth_clip_control`
 * `VK_EXT_device_memory_report`
 * `VK_EXT_external_memory_host`
+* `VK_EXT_image_2d_view_of_3d`
 * `VK_EXT_image_drm_format_modifier`
 * `VK_EXT_image_view_min_lod`
 * `VK_EXT_multi_draw`
 * `VK_EXT_pageable_device_local_memory`
 * `VK_EXT_physical_device_drm`
 * `VK_EXT_primitive_topology_list_restart`
+* `VK_EXT_primitives_generated_query`
 * `VK_EXT_provoking_vertex`
 
 ## Platform/IHV Extensions
@@ -308,6 +313,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 ### Valve
 
 * `VK_VALVE_mutable_descriptor_type`
+* `VK_VALVE_descriptor_set_host_mapping`
 
 ## WSI for other platforms
 

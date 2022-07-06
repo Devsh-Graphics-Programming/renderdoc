@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -57,7 +57,7 @@ const DXBC::CBufferVariable *FindCBufferVar(const uint32_t minOffset, const uint
 
     // does minOffset-maxOffset reside in this variable? We don't handle the case where the range
     // crosses a variable (and I don't think FXC emits that anyway).
-    if(voffs <= minOffset && voffs + v.type.descriptor.bytesize > maxOffset)
+    if(voffs <= minOffset && voffs + v.type.bytesize > maxOffset)
     {
       byteOffset = voffs;
 
@@ -368,7 +368,16 @@ rdcstr Operand::toString(const DXBC::Reflection *reflection, ToString toStrFlags
           }
         }
 
-        if(cbuffer)
+        if(cbuffer && decl)
+        {
+          // for declarations don't look up the variable name. This actually lists the size in
+          // float4s of the constant buffer, and in the case of dead code elimination there could be
+          // variables past that point which have been removed which we'd find
+
+          if(!cbuffer->name.empty())
+            str += " (" + cbuffer->name + ")";
+        }
+        else if(cbuffer)
         {
           // if the second index is constant then this is easy enough, we just find the matching
           // cbuffer variable and use its name, possibly rebasing the swizzle.
@@ -407,14 +416,14 @@ rdcstr Operand::toString(const DXBC::Reflection *reflection, ToString toStrFlags
               uint32_t varOffset = minOffset - baseOffset;
 
               // if it's an array, add the index based on the relative index to the base offset
-              if(var->type.descriptor.elements > 1)
+              if(var->type.elements > 1)
               {
-                uint32_t byteSize = var->type.descriptor.bytesize;
+                uint32_t byteSize = var->type.bytesize;
 
                 // round up the byte size to a the nearest vec4 in case it's not quite a multiple
                 byteSize = AlignUp16(byteSize);
 
-                const uint32_t elementSize = byteSize / var->type.descriptor.elements;
+                const uint32_t elementSize = byteSize / var->type.elements;
 
                 const uint32_t elementIndex = varOffset / elementSize;
 
@@ -425,10 +434,8 @@ rdcstr Operand::toString(const DXBC::Reflection *reflection, ToString toStrFlags
               }
 
               // or if it's a matrix
-              if((var->type.descriptor.varClass == DXBC::CLASS_MATRIX_ROWS &&
-                  var->type.descriptor.cols > 1) ||
-                 (var->type.descriptor.varClass == DXBC::CLASS_MATRIX_COLUMNS &&
-                  var->type.descriptor.rows > 1))
+              if((var->type.varClass == DXBC::CLASS_MATRIX_ROWS && var->type.cols > 1) ||
+                 (var->type.varClass == DXBC::CLASS_MATRIX_COLUMNS && var->type.rows > 1))
               {
                 str += StringFormat::Fmt("[%u]", varOffset / 16);
               }
@@ -894,7 +901,7 @@ void Program::MakeDisassemblyString()
     fileLines.resize(m_DebugInfo->Files.size());
 
     for(size_t i = 0; i < m_DebugInfo->Files.size(); i++)
-      split(m_DebugInfo->Files[i].second, fileLines[i], '\n');
+      split(m_DebugInfo->Files[i].contents, fileLines[i], '\n');
   }
 
   for(size_t d = 0; d < m_Declarations.size(); d++)
@@ -977,15 +984,16 @@ void Program::MakeDisassemblyString()
 
           if(!func.empty())
           {
-            m_Disassembly += StringFormat::Fmt("%s:%d - %s()\n",
-                                               m_DebugInfo->Files[lineInfo.fileIndex].first.c_str(),
-                                               lineInfo.lineStart, func.c_str());
+            m_Disassembly += StringFormat::Fmt(
+                "%s:%d - %s()\n", m_DebugInfo->Files[lineInfo.fileIndex].filename.c_str(),
+                lineInfo.lineStart, func.c_str());
             linenum++;
           }
           else
           {
-            m_Disassembly += StringFormat::Fmt(
-                "%s:%d\n", m_DebugInfo->Files[lineInfo.fileIndex].first.c_str(), lineInfo.lineStart);
+            m_Disassembly +=
+                StringFormat::Fmt("%s:%d\n", m_DebugInfo->Files[lineInfo.fileIndex].filename.c_str(),
+                                  lineInfo.lineStart);
             linenum++;
           }
         }

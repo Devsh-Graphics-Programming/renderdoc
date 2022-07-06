@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -743,9 +743,9 @@ void PipelineStateViewer::MakeShaderVariablesHLSL(bool cbufferContents,
 {
   for(const ShaderConstant &v : vars)
   {
-    if(!v.type.members.isEmpty())
+    if(v.type.baseType == VarType::Struct)
     {
-      QString def = lit("struct %1 {\n").arg(v.type.descriptor.name);
+      QString def = lit("struct %1 {\n").arg(v.type.name);
 
       if(!struct_defs.contains(def))
       {
@@ -756,14 +756,13 @@ void PipelineStateViewer::MakeShaderVariablesHLSL(bool cbufferContents,
       }
     }
 
-    if(v.type.descriptor.elements > 1)
+    if(v.type.elements > 1)
     {
-      struct_contents +=
-          lit("\t%1 %2[%3]").arg(v.type.descriptor.name).arg(v.name).arg(v.type.descriptor.elements);
+      struct_contents += lit("\t%1 %2[%3]").arg(v.type.name).arg(v.name).arg(v.type.elements);
     }
     else
     {
-      struct_contents += lit("\t%1 %2").arg(v.type.descriptor.name).arg(v.name);
+      struct_contents += lit("\t%1 %2").arg(v.type.name).arg(v.name);
     }
 
     if((v.byteOffset % 4) != 0)
@@ -875,18 +874,18 @@ QString PipelineStateViewer::GenerateHLSLStub(const ShaderBindpointMapping &bind
       {
         hlsl += lit("%1<%2> %3 : register(%4%5);\n")
                     .arg(textureDim[(size_t)res.resType])
-                    .arg(res.variableType.descriptor.name)
+                    .arg(res.variableType.name)
                     .arg(res.name)
                     .arg(QLatin1Char(regChar))
                     .arg(reg);
       }
       else
       {
-        if(res.variableType.descriptor.rows > 1)
+        if(res.variableType.rows > 1)
           hlsl += lit("Structured");
 
         hlsl += lit("Buffer<%1> %2 : register(%3%4);\n")
-                    .arg(res.variableType.descriptor.name)
+                    .arg(res.variableType.name)
                     .arg(res.name)
                     .arg(QLatin1Char(regChar))
                     .arg(reg);
@@ -1370,6 +1369,8 @@ QString PipelineStateViewer::GetVBufferFormatString(uint32_t slot)
 
   uint32_t offset = 0;
 
+  format = lit("struct vbuffer {\n");
+
   for(size_t i = 0; i < attrs.size(); i++)
   {
     // we disallowed overlaps above, but we do allow *duplicates*. So if our offset has already
@@ -1377,8 +1378,11 @@ QString PipelineStateViewer::GetVBufferFormatString(uint32_t slot)
     if(attrs[i].byteOffset < offset)
       continue;
 
-    // declare any padding from previous element to this one
-    format += BufferFormatter::DeclarePaddingBytes(attrs[i].byteOffset - offset);
+    // declare an explicit offset if there's a gap from previous element to this one
+    if(attrs[i].byteOffset > offset)
+      format += lit("  [[offset(%1)]]\n").arg(attrs[i].byteOffset);
+
+    format += lit("  ");
 
     const ResourceFormat &fmt = attrs[i].format;
 
@@ -1389,12 +1393,12 @@ QString PipelineStateViewer::GetVBufferFormatString(uint32_t slot)
       switch(fmt.type)
       {
         case ResourceFormatType::R10G10B10A2:
-          if(fmt.compType == CompType::UInt)
-            format += lit("uintten");
           if(fmt.compType == CompType::UNorm)
-            format += lit("unormten");
+            format += lit("[[packed(r10g10b10a2)]] [[unorm]] uint4");
+          else
+            format += lit("[[packed(r10g10b10a2)]] uint4");
           break;
-        case ResourceFormatType::R11G11B10: format += lit("floateleven"); break;
+        case ResourceFormatType::R11G11B10: format += lit("[[packed(r11g11b10)]] float3"); break;
         default: format += tr("// unknown type "); break;
       }
     }
@@ -1406,39 +1410,41 @@ QString PipelineStateViewer::GetVBufferFormatString(uint32_t slot)
 
       if(fmt.compType == CompType::UNorm || fmt.compType == CompType::UNormSRGB)
       {
-        format += lit("unorm%1").arg(widthchar[fmt.compByteWidth]);
+        format += lit("[[unorm]]");
       }
       else if(fmt.compType == CompType::SNorm)
       {
-        format += lit("snorm%1").arg(widthchar[fmt.compByteWidth]);
+        format += lit("[[snorm]]");
       }
-      else
-      {
-        if(fmt.compType == CompType::UInt)
-          format += lit("u");
 
-        if(fmt.compByteWidth == 1)
-        {
-          format += lit("byte");
-        }
-        else if(fmt.compByteWidth == 2)
-        {
-          if(fmt.compType == CompType::Float)
-            format += lit("half");
-          else
-            format += lit("short");
-        }
-        else if(fmt.compByteWidth == 4)
-        {
-          if(fmt.compType == CompType::Float)
-            format += lit("float");
-          else
-            format += lit("int");
-        }
-        else if(fmt.compByteWidth == 8)
-        {
+      if(fmt.compType == CompType::UInt || fmt.compType == CompType::UNorm ||
+         fmt.compType == CompType::UNormSRGB)
+        format += lit("u");
+
+      if(fmt.compByteWidth == 1)
+      {
+        format += lit("byte");
+      }
+      else if(fmt.compByteWidth == 2)
+      {
+        if(fmt.compType == CompType::Float)
+          format += lit("half");
+        else
+          format += lit("short");
+      }
+      else if(fmt.compByteWidth == 4)
+      {
+        if(fmt.compType == CompType::Float)
+          format += lit("float");
+        else
+          format += lit("int");
+      }
+      else if(fmt.compByteWidth == 8)
+      {
+        if(fmt.compType == CompType::Float)
           format += lit("double");
-        }
+        else
+          format += lit("long");
       }
 
       format += QString::number(fmt.compCount);
@@ -1458,8 +1464,14 @@ QString PipelineStateViewer::GetVBufferFormatString(uint32_t slot)
       format += QFormatStr(" %1; // %2\n").arg(sanitised_name).arg(real_name);
   }
 
-  if(stride > 0)
-    format += BufferFormatter::DeclarePaddingBytes(stride - offset);
+  format += lit("}\n\nvbuffer vertex[];");
+
+  if(stride > offset)
+    format = lit("[[size(%1)]]\n").arg(stride) + format;
+
+  format = lit("#pack(scalar) // vertex buffers can be tightly packed\n"
+               "\n") +
+           format;
 
   return format;
 }

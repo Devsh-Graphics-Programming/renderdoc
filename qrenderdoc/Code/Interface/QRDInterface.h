@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1251,25 +1251,6 @@ protected:
 
 DECLARE_REFLECTION_STRUCT(IShaderMessageViewer);
 
-DOCUMENT("A constant buffer preview window.");
-struct IConstantBufferPreviewer
-{
-  DOCUMENT(R"(Retrieves the PySide2 QWidget for this :class:`ConstantBufferPreviewer` if PySide2 is available, or otherwise
-returns a unique opaque pointer that can be passed back to any RenderDoc functions expecting a
-QWidget.
-
-:return: Return the widget handle, either a PySide2 handle or an opaque handle.
-:rtype: QWidget
-)");
-  virtual QWidget *Widget() = 0;
-
-protected:
-  IConstantBufferPreviewer() = default;
-  ~IConstantBufferPreviewer() = default;
-};
-
-DECLARE_REFLECTION_STRUCT(IConstantBufferPreviewer);
-
 DOCUMENT("A pixel history window.");
 struct IPixelHistoryView
 {
@@ -1369,9 +1350,9 @@ struct IReplayManager
 
 :param RemoteHost host: The host to connect to.
 :return: Whether or not the connection was successful.
-:rtype: renderdoc.ReplayStatus
+:rtype: renderdoc.ResultDetails
 )");
-  virtual ReplayStatus ConnectToRemoteServer(RemoteHost host) = 0;
+  virtual ResultDetails ConnectToRemoteServer(RemoteHost host) = 0;
 
   DOCUMENT("Disconnect from the server the manager is currently connected to.");
   virtual void DisconnectFromRemoteServer() = 0;
@@ -1894,9 +1875,9 @@ temporary and treated like any other capture.
   DOCUMENT(R"(If a capture is loaded, return the current fatal error status.
 
 :return: If a capture is currently loaded, return the fatal error status.
-:rtype: renderdoc.ReplayStatus
+:rtype: renderdoc.ResultDetails
 )");
-  virtual ReplayStatus GetFatalError() = 0;
+  virtual ResultDetails GetFatalError() = 0;
 
   DOCUMENT(R"(Retrieve the filename for the currently loaded capture.
 
@@ -1944,6 +1925,15 @@ building custom shaders for the currently loaded capture. See
 :rtype: List[renderdoc.ShaderEncoding]
 )");
   virtual rdcarray<ShaderEncoding> CustomShaderEncodings() = 0;
+
+  DOCUMENT(R"(Retrieve the list of prefixes for each :class:`~renderdoc.ShaderEncoding` that should
+be added to custom compiled shaders. See
+:meth:`~renderdoc.ReplayController.GetCustomShaderSourcePrefixes`.
+
+:return: A list of pairs, listing a prefix for each shader encoding referenced.
+:rtype: List[renderdoc.ShaderSourcePrefix]
+)");
+  virtual rdcarray<ShaderSourcePrefix> CustomShaderSourcePrefixes() = 0;
 
   DOCUMENT(R"(Retrieve the currently selected :data:`eventId <renderdoc.APIEvent.eventId>`.
 
@@ -2584,18 +2574,17 @@ bytes.
   virtual IBufferViewer *ViewTextureAsBuffer(ResourceId id, const Subresource &sub,
                                              const rdcstr &format = "") = 0;
 
-  DOCUMENT(R"(Show a new :class:`ConstantBufferPreviewer` window, showing a read-only view of a the
+  DOCUMENT(R"(Show a new :class:`BufferViewer` window, showing a read-only view of a the
 variables in a constant buffer with their values.
 
 :param renderdoc.ShaderStage stage: The stage that the constant buffer is bound to.
 :param int slot: The index in the shader's constant buffer list to look up.
 :param int idx: For APIs that support arrayed resource binds, the index in the constant buffer
   array.
-:return: The new :class:`ConstantBufferPreviewer` window opened, but not shown.
-:rtype: ConstantBufferPreviewer
+:return: The new :class:`BufferViewer` window opened, but not shown.
+:rtype: BufferViewer
 )");
-  virtual IConstantBufferPreviewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot,
-                                                       uint32_t idx) = 0;
+  virtual IBufferViewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot, uint32_t idx) = 0;
 
   DOCUMENT(R"(Show a new :class:`PixelHistoryView` window, showing the results from a pixel history
 operation.

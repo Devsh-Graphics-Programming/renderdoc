@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,8 +38,12 @@ class RDSpinBox64;
 class QItemSelection;
 class QMenu;
 class QPushButton;
+class QVBoxLayout;
+class RDLabel;
 class RDTableView;
+class RDSplitter;
 class BufferItemModel;
+class CollapseGroupBox;
 class CameraWrapper;
 class ArcballWrapper;
 class FlycamWrapper;
@@ -69,6 +73,16 @@ struct BBoxData
   } bounds[3];
 };
 
+struct CBufferData
+{
+  bool valid = false;
+  bool bufferBacked = false;
+  ResourceId pipe;
+  ResourceId shader;
+  rdcstr entryPoint;
+  bytebuf inlinedata;
+};
+
 class BufferViewer : public QFrame, public IBufferViewer, public ICaptureViewer
 {
   Q_OBJECT
@@ -79,7 +93,11 @@ public:
   explicit BufferViewer(ICaptureContext &ctx, bool meshview, QWidget *parent = 0);
   ~BufferViewer();
 
+  static BufferViewer *HasCBufferView(ShaderStage stage, uint32_t slot, uint32_t idx);
+  static BufferViewer *GetFirstCBufferView(BufferViewer *exclude);
+  bool IsCBufferView() const { return m_CBufferSlot.stage != ShaderStage::Count; }
   void ViewBuffer(uint64_t byteOffset, uint64_t byteSize, ResourceId id, const rdcstr &format = "");
+  void ViewCBuffer(const ShaderStage stage, uint32_t slot, uint32_t idx);
   void ViewTexture(ResourceId id, const Subresource &sub, const rdcstr &format = "");
 
   // IBufferViewer
@@ -106,6 +124,7 @@ private slots:
   void on_autofitCamera_clicked();
   void on_toggleControls_toggled(bool checked);
   void on_syncViews_toggled(bool checked);
+  void on_showPadding_toggled(bool checked);
   void on_resourceDetails_clicked();
   void on_highlightVerts_toggled(bool checked);
   void on_wireframeRender_toggled(bool checked);
@@ -120,6 +139,7 @@ private slots:
   void on_byteRangeLength_valueChanged(double value);
   void on_axisMappingCombo_currentIndexChanged(int index);
   void on_axisMappingButton_clicked();
+  void on_setFormat_toggled(bool checked);
 
   // manual slots
   void render_mouseMove(QMouseEvent *e);
@@ -136,8 +156,10 @@ private slots:
 
   void processFormat(const QString &format);
 
+  void updateExportActionNames();
   void exportData(const BufferExport &params);
   void debugVertex();
+  void fixedVars_contextMenu(const QPoint &pos);
 
 private:
   bool eventFilter(QObject *watched, QEvent *event) override;
@@ -175,11 +197,17 @@ private:
   void UI_UpdateBoundingBox(const CalcBoundingBoxData &bbox);
   void UI_UpdateBoundingBoxLabels(int compCount = 0);
 
+  void UI_AddFixedVariables(RDTreeWidgetItem *root, uint32_t baseOffset,
+                            const rdcarray<ShaderConstant> &consts,
+                            const rdcarray<ShaderVariable> &vars);
+  void UI_RemoveOffsets(RDTreeWidgetItem *root);
+  void UI_FixedAddMatrixRows(RDTreeWidgetItem *n, const ShaderConstant &c, const ShaderVariable &v);
+
+  void exportCSV(QTextStream &ts, const QString &prefix, RDTreeWidgetItem *item);
+
   void FillScrolls(PopulateBufferData *bufdata);
 
   void UI_ResetArcball();
-
-  uint64_t CurrentByteOffset();
 
   // data from raw buffer view
   bool m_IsBuffer = true;
@@ -190,6 +218,22 @@ private:
   uint64_t m_ObjectByteSize = UINT64_MAX;
   uint64_t m_ByteSize = UINT64_MAX;
   ResourceId m_BufferID;
+
+  struct CBufferSlot
+  {
+    ShaderStage stage;
+    uint32_t slot;
+    uint32_t arrayIdx;
+
+    bool operator==(const CBufferSlot &c) const
+    {
+      return stage == c.stage && slot == c.slot && arrayIdx == c.arrayIdx;
+    }
+  } m_CBufferSlot = {ShaderStage::Count, 0, 0};
+
+  CBufferData m_CurCBuffer;
+
+  static QList<BufferViewer *> m_CBufferViews;
 
   CameraWrapper *m_CurrentCamera = NULL;
   ArcballWrapper *m_Arcball = NULL;
@@ -208,6 +252,7 @@ private:
   int m_Sequence = 0;
 
   RDTableView *m_CurView = NULL;
+  bool m_CurFixed = false;
   int m_ContextColumn = -1;
 
   int m_ColumnWidthRowCount = -1;
@@ -218,6 +263,17 @@ private:
   int previousAxisMappingIndex = 0;
 
   RichTextViewDelegate *m_delegate = NULL;
+
+  QVBoxLayout *m_VLayout = NULL;
+  RDSplitter *m_OuterSplitter = NULL;
+  RDSplitter *m_InnerSplitter = NULL;
+
+  CollapseGroupBox *m_FixedGroup = NULL;
+  CollapseGroupBox *m_RepeatedGroup = NULL;
+
+  QFrame *m_RepeatedControlBar = NULL;
+
+  RDLabel *m_RepeatedOffset = NULL;
 
   QMenu *m_HeaderMenu = NULL;
 

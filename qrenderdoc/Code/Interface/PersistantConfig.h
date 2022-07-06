@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -404,10 +404,11 @@ DECLARE_REFLECTION_STRUCT(BugReport);
   CONFIG_SETTING_VAL(public, int, int, LocalProxyAPI, -1)                                          \
                                                                                                    \
   DOCUMENT(                                                                                        \
-      "``True`` if the buffer formatter's help section should be shown.\n"                         \
-      "\n:"                                                                                        \
-      "Defaults to ``True``.");                                                                    \
-  CONFIG_SETTING_VAL(public, bool, bool, BufferFormatter_ShowHelp, true)                           \
+      "A list of strings with saved formats for the buffer formatter. The first line is the "      \
+      "name and the rest of the contents are the formats.\n"                                       \
+      "\n"                                                                                         \
+      ":type: List[str]");                                                                         \
+  CONFIG_SETTING(public, QVariantList, rdcarray<rdcstr>, BufferFormatter_SavedFormats)             \
                                                                                                    \
   DOCUMENT(                                                                                        \
       "The :class:`TimeUnit` to use to display the duration column in the "                        \
@@ -520,8 +521,8 @@ DECLARE_REFLECTION_STRUCT(BugReport);
                      rdcdatetime(2015, 01, 01))                                                    \
                                                                                                    \
   DOCUMENT(                                                                                        \
-      "``True`` if when coloring marker regions in the :class:`EventBrowser`, the whole row "      \
-      "should be colored instead of just a side-bar.\n"                                            \
+      "``True`` if the UI should be allowed to make update checks remotely to see if a new "       \
+      "version is available.\n"                                                                    \
       "\n"                                                                                         \
       "Defaults to ``True``.");                                                                    \
   CONFIG_SETTING_VAL(public, bool, bool, CheckUpdate_AllowChecks, true)                            \

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -121,6 +121,9 @@ void RDHeaderView::cacheSections()
     return;
 
   QAbstractItemModel *m = this->model();
+
+  if(!m)
+    return;
 
   int oldCount = m_sections.count();
   m_sections.resize(m->columnCount());

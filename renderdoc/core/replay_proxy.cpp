@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -129,37 +129,37 @@ rdcstr DoStringise(const ReplayProxyPacket &el)
 // begin serialising a return value. We begin a chunk here in either the writing or reading case
 // since this chunk is used purely to send/receive the return value and is fully handled within the
 // function.
-#define SERIALISE_RETURN(retval)                                                          \
-  {                                                                                       \
-    ReplayStatus fatalStatus = ReplayStatus::Succeeded;                                   \
-    if(m_RemoteServer)                                                                    \
-      fatalStatus = m_Remote->FatalErrorCheck();                                          \
-    ReturnSerialiser &ser = retser;                                                       \
-    PACKET_HEADER(packet);                                                                \
-    SERIALISE_ELEMENT(retval);                                                            \
-    GET_SERIALISER.Serialise("fatalStatus"_lit, fatalStatus);                             \
-    GET_SERIALISER.Serialise("packet"_lit, packet);                                       \
-    ser.EndChunk();                                                                       \
-    if(fatalStatus != ReplayStatus::Succeeded && m_FatalError == ReplayStatus::Succeeded) \
-      m_FatalError = fatalStatus;                                                         \
-    CheckError(packet, expectedPacket);                                                   \
+#define SERIALISE_RETURN(retval)                                                      \
+  {                                                                                   \
+    RDResult fatalStatus = ResultCode::Succeeded;                                     \
+    if(m_RemoteServer)                                                                \
+      fatalStatus = m_Remote->FatalErrorCheck();                                      \
+    ReturnSerialiser &ser = retser;                                                   \
+    PACKET_HEADER(packet);                                                            \
+    SERIALISE_ELEMENT(retval);                                                        \
+    GET_SERIALISER.Serialise("fatalStatus"_lit, fatalStatus);                         \
+    GET_SERIALISER.Serialise("packet"_lit, packet);                                   \
+    ser.EndChunk();                                                                   \
+    if(fatalStatus != ResultCode::Succeeded && m_FatalError == ResultCode::Succeeded) \
+      m_FatalError = fatalStatus;                                                     \
+    CheckError(packet, expectedPacket);                                               \
   }
 
 // similar to the above, but for void functions that don't return anything. We still want to check
 // that both sides of the communication are on the same page.
-#define SERIALISE_RETURN_VOID()                                                           \
-  {                                                                                       \
-    ReplayStatus fatalStatus = ReplayStatus::Succeeded;                                   \
-    if(m_RemoteServer)                                                                    \
-      fatalStatus = m_Remote->FatalErrorCheck();                                          \
-    ReturnSerialiser &ser = retser;                                                       \
-    PACKET_HEADER(packet);                                                                \
-    SERIALISE_ELEMENT(packet);                                                            \
-    GET_SERIALISER.Serialise("fatalStatus"_lit, fatalStatus);                             \
-    ser.EndChunk();                                                                       \
-    if(fatalStatus != ReplayStatus::Succeeded && m_FatalError == ReplayStatus::Succeeded) \
-      m_FatalError = fatalStatus;                                                         \
-    CheckError(packet, expectedPacket);                                                   \
+#define SERIALISE_RETURN_VOID()                                                       \
+  {                                                                                   \
+    RDResult fatalStatus = ResultCode::Succeeded;                                     \
+    if(m_RemoteServer)                                                                \
+      fatalStatus = m_Remote->FatalErrorCheck();                                      \
+    ReturnSerialiser &ser = retser;                                                   \
+    PACKET_HEADER(packet);                                                            \
+    SERIALISE_ELEMENT(packet);                                                        \
+    GET_SERIALISER.Serialise("fatalStatus"_lit, fatalStatus);                         \
+    ser.EndChunk();                                                                   \
+    if(fatalStatus != ResultCode::Succeeded && m_FatalError == ResultCode::Succeeded) \
+      m_FatalError = fatalStatus;                                                     \
+    CheckError(packet, expectedPacket);                                               \
   }
 
 // defines the area where we're executing on the remote host. To avoid timeouts, the remote side
@@ -1454,7 +1454,7 @@ void ReplayProxy::Proxied_ReplaceResource(ParamSerialiser &paramser, ReturnSeria
   }
 
   if(paramser.IsWriting())
-    m_LiveIDs.erase(from);
+    m_LiveIDs.clear();
 
   SERIALISE_RETURN_VOID();
 }
@@ -1484,7 +1484,7 @@ void ReplayProxy::Proxied_RemoveReplacement(ParamSerialiser &paramser, ReturnSer
   }
 
   if(paramser.IsWriting())
-    m_LiveIDs.erase(id);
+    m_LiveIDs.clear();
 
   SERIALISE_RETURN_VOID();
 }
@@ -2447,11 +2447,14 @@ void ReplayProxy::EnsureTexCached(ResourceId &texid, CompType &typeCast, const S
     }
 
     const ProxyTextureProperties &proxy = proxyit->second;
+    const bool allSamples = sub.sample == ~0U;
 
-    for(uint32_t sample = 0; sample < proxy.msSamp; sample++)
+    uint32_t numSamplesToFetch = allSamples ? proxy.msSamp : 1;
+    for(uint32_t sample = 0; sample < numSamplesToFetch; sample++)
     {
       Subresource s = sub;
-      s.sample = sample;
+      if(allSamples)
+        s.sample = sample;
 
       TextureCacheEntry sampleArrayEntry = {texid, s};
 
@@ -2787,7 +2790,7 @@ void ReplayProxy::RemoteExecutionThreadEntry()
   }
 }
 
-ReplayStatus ReplayProxy::FatalErrorCheck()
+RDResult ReplayProxy::FatalErrorCheck()
 {
   // this isn't proxied since it's called at relatively high frequency. Whenever we proxy a
   // function, we also return the the remote side's status
@@ -2795,13 +2798,13 @@ ReplayStatus ReplayProxy::FatalErrorCheck()
   {
     // if we're error'd due to a network issue (i.e. the other side crashed and disconnected) we
     // won't have a status, set a generic one
-    if(m_FatalError == ReplayStatus::Succeeded)
-      m_FatalError = ReplayStatus::RemoteServerConnectionLost;
+    if(m_FatalError == ResultCode::Succeeded)
+      m_FatalError = ResultCode::RemoteServerConnectionLost;
 
     return m_FatalError;
   }
 
-  return ReplayStatus::Succeeded;
+  return ResultCode::Succeeded;
 }
 
 IReplayDriver *ReplayProxy::MakeDummyDriver()
@@ -2822,10 +2825,10 @@ IReplayDriver *ReplayProxy::MakeDummyDriver()
 
 bool ReplayProxy::CheckError(ReplayProxyPacket receivedPacket, ReplayProxyPacket expectedPacket)
 {
-  if(m_FatalError != ReplayStatus::Succeeded)
+  if(m_FatalError != ResultCode::Succeeded)
   {
     RDCERR("Fatal error detected while processing %s: %s", ToStr(expectedPacket).c_str(),
-           ToStr(m_FatalError).c_str());
+           ResultDetails(m_FatalError).Message().c_str());
     m_IsErrored = true;
     return true;
   }

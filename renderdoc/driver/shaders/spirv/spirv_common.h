@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -231,9 +231,28 @@ private:
   uint32_t value;
 };
 
+// need to do this in a separate struct because you can't specialise a member function in a
+// templated class. Blech
+struct OpExtInstHelper
+{
+  rdcarray<uint32_t> params;
+
+  template <typename T>
+  T arg(uint32_t idx)
+  {
+    return T(params[idx]);
+  }
+};
+
+template <>
+inline Id OpExtInstHelper::arg<Id>(uint32_t idx)
+{
+  return Id::fromWord(params[idx]);
+}
+
 // helper in the style of the auto-generated one for ext insts
 template <typename InstType>
-struct OpExtInstGeneric
+struct OpExtInstGeneric : public OpExtInstHelper
 {
   OpExtInstGeneric(IdResultType resultType, IdResult result, Id set, InstType inst,
                    const rdcarray<IdOrWord> &params)
@@ -279,7 +298,6 @@ struct OpExtInstGeneric
   IdResult result;
   Id set;
   InstType inst;
-  rdcarray<uint32_t> params;
 };
 
 struct OpExtInst : public OpExtInstGeneric<uint32_t>
@@ -299,6 +317,15 @@ struct OpGLSL450 : public OpExtInstGeneric<rdcspv::GLSLstd450>
   {
   }
   OpGLSL450(const ConstIter &it) : OpExtInstGeneric(it) {}
+};
+struct OpShaderDbg : public OpExtInstGeneric<rdcspv::ShaderDbg>
+{
+  OpShaderDbg(IdResultType resultType, IdResult result, Id set, rdcspv::ShaderDbg inst,
+              const rdcarray<IdOrWord> &params)
+      : OpExtInstGeneric(resultType, result, set, inst, params)
+  {
+  }
+  OpShaderDbg(const ConstIter &it) : OpExtInstGeneric(it) {}
 };
 
 };    // namespace rdcspv

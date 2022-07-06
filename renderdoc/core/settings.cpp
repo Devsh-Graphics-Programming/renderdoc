@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -189,7 +189,7 @@ static SDObject *XML2Config(pugi::xml_node &obj)
       valueObj = makeSDArray("value"_lit);
 
       uint32_t i = 0;
-      for(pugi::xml_node el = value.first_child(); el; el = el.next_sibling())
+      for(pugi::xml_node el = value; el; el = el.next_sibling())
       {
         SDObject *childObj = makeSDObject("$el"_lit, type, el);
 

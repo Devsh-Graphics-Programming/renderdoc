@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2021 Baldur Karlsson
+* Copyright (c) 2019-2022 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -142,8 +142,8 @@ struct VulkanWindow : public GraphicsWindow
   VkCommandBuffer GetCommandBuffer(VkCommandBufferLevel level);
   void Submit(int index, int totalSubmits, const std::vector<VkCommandBuffer> &cmds,
               const std::vector<VkCommandBuffer> &seccmds, VkQueue q, bool sync2);
+  static void MultiPresent(VkQueue queue, std::vector<VulkanWindow *> windows);
   void Present(VkQueue q);
-  void Acquire();
 
   // forward GraphicsWindow functions to internal window
   void Resize(int width, int height) { m_Win->Resize(width, height); }
@@ -151,6 +151,9 @@ struct VulkanWindow : public GraphicsWindow
 private:
   bool CreateSwapchain();
   void DestroySwapchain();
+
+  void Acquire();
+  void PostPresent(VkResult vkr);
 
   VkSurfaceKHR surface = VK_NULL_HANDLE;
   VkSwapchainKHR swap = VK_NULL_HANDLE;
@@ -297,5 +300,6 @@ private:
   GraphicsWindow *MakePlatformWindow(int width, int height, const char *title);
 };
 
+extern std::string VKFullscreenQuadVertex;
 extern std::string VKDefaultVertex;
 extern std::string VKDefaultPixel;

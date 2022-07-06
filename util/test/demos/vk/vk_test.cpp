@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2021 Baldur Karlsson
+* Copyright (c) 2019-2022 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,24 @@
 ******************************************************************************/
 
 #include "../test_common.h"
+
+std::string VKFullscreenQuadVertex = R"EOSHADER(
+
+#version 460 core
+
+void main()
+{
+	vec2 positions[] = {
+		vec2(-1.0f,  1.0f),
+		vec2( 1.0f,  1.0f),
+		vec2(-1.0f, -1.0f),
+		vec2( 1.0f, -1.0f),
+	};
+
+	gl_Position = vec4(positions[gl_VertexIndex], 0, 1);
+}
+
+)EOSHADER";
 
 static std::string common = R"EOSHADER(
 
@@ -659,7 +677,8 @@ bool VulkanGraphicsTest::Init()
 
   vmaCreateAllocator(&allocInfo, &allocator);
 
-  TEST_LOG("Running Vulkan test on %s", physProperties.deviceName);
+  TEST_LOG("Running Vulkan test on %s (version %d.%d)", physProperties.deviceName,
+           VK_VERSION_MAJOR(physProperties.apiVersion), VK_VERSION_MINOR(physProperties.apiVersion));
 
   return true;
 }
@@ -875,6 +894,12 @@ template <>
 void VulkanGraphicsTest::setName(VkBuffer obj, const std::string &name)
 {
   setName(VK_OBJECT_TYPE_BUFFER, (uint64_t)obj, name);
+}
+
+template <>
+void VulkanGraphicsTest::setName(VkSemaphore obj, const std::string &name)
+{
+  setName(VK_OBJECT_TYPE_SEMAPHORE, (uint64_t)obj, name);
 }
 
 void VulkanGraphicsTest::setName(VkObjectType objType, uint64_t obj, const std::string &name)
@@ -1112,6 +1137,7 @@ VkSampler VulkanGraphicsTest::createSampler(const VkSamplerCreateInfo *info)
 }
 
 VulkanWindow::VulkanWindow(VulkanGraphicsTest *test, GraphicsWindow *win)
+    : GraphicsWindow(win->title)
 {
   m_Test = test;
   m_Win = win;
@@ -1127,6 +1153,9 @@ VulkanWindow::VulkanWindow(VulkanGraphicsTest *test, GraphicsWindow *win)
         vkCreateSemaphore(m_Test->device, vkh::SemaphoreCreateInfo(), NULL, &renderStartSemaphore));
     CHECK_VKR(
         vkCreateSemaphore(m_Test->device, vkh::SemaphoreCreateInfo(), NULL, &renderEndSemaphore));
+
+    test->setName(renderStartSemaphore, title + " renderStartSemaphore");
+    test->setName(renderEndSemaphore, title + " renderEndSemaphore");
 
 #if defined(WIN32)
     VkWin32SurfaceCreateInfoKHR createInfo;
@@ -1370,6 +1399,47 @@ void VulkanWindow::Submit(int index, int totalSubmits, const std::vector<VkComma
     pendingCommandBuffers[1].push_back(std::make_pair(cmd, fence));
 }
 
+void VulkanWindow::MultiPresent(VkQueue queue, std::vector<VulkanWindow *> windows)
+{
+  std::vector<VkSwapchainKHR> swaps;
+  std::vector<uint32_t> idxs;
+  std::vector<VkSemaphore> waitSems;
+  std::vector<VkResult> vkrs;
+
+  for(auto it : windows)
+  {
+    if(it->swap == VK_NULL_HANDLE)
+      continue;
+
+    swaps.push_back(it->swap);
+    idxs.push_back(it->imgIndex);
+    waitSems.push_back(it->renderEndSemaphore);
+    vkrs.push_back(VK_SUCCESS);
+  }
+
+  if(swaps.empty())
+    return;
+
+  VkPresentInfoKHR info = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+  info.swapchainCount = (uint32_t)swaps.size();
+  info.waitSemaphoreCount = (uint32_t)waitSems.size();
+  info.pSwapchains = swaps.data();
+  info.pImageIndices = idxs.data();
+  info.pWaitSemaphores = waitSems.data();
+  info.pResults = vkrs.data();
+
+  vkQueuePresentKHR(queue, &info);
+
+  size_t i = 0;
+  for(auto it : windows)
+  {
+    if(it->swap == VK_NULL_HANDLE)
+      continue;
+
+    it->PostPresent(vkrs[i++]);
+  }
+}
+
 void VulkanWindow::Present(VkQueue queue)
 {
   if(swap == VK_NULL_HANDLE)
@@ -1377,6 +1447,11 @@ void VulkanWindow::Present(VkQueue queue)
 
   VkResult vkr = vkQueuePresentKHR(queue, vkh::PresentInfoKHR(swap, imgIndex, &renderEndSemaphore));
 
+  PostPresent(vkr);
+}
+
+void VulkanWindow::PostPresent(VkResult vkr)
+{
   if(vkr == VK_SUBOPTIMAL_KHR || vkr == VK_ERROR_OUT_OF_DATE_KHR)
   {
     DestroySwapchain();

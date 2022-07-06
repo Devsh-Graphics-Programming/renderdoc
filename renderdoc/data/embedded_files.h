@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -69,5 +69,9 @@ DECLARE_EMBED(glsl_pixelhistory_primid_frag);
 DECLARE_EMBED(glsl_shaderdebug_sample_vert);
 DECLARE_EMBED(glsl_texremap_frag);
 DECLARE_EMBED(glsl_discard_frag);
+DECLARE_EMBED(glsl_vk_ms2buffer_comp);
+DECLARE_EMBED(glsl_vk_depthms2buffer_comp);
+DECLARE_EMBED(glsl_vk_buffer2ms_comp);
+DECLARE_EMBED(glsl_vk_depthbuf2ms_frag);
 
 #undef DECLARE_EMBED

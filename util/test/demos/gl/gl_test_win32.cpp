@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2021 Baldur Karlsson
+* Copyright (c) 2019-2022 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -258,11 +258,14 @@ void OpenGLGraphicsTest::DestroyContext(void *ctx)
   deleteContext((HGLRC)ctx);
 }
 
-void OpenGLGraphicsTest::ActivateContext(GraphicsWindow *win, void *ctx)
+void OpenGLGraphicsTest::ActivateContext(GraphicsWindow *win, void *ctx, bool alt)
 {
   if(ctx == NULL)
   {
-    makeCurrent(NULL, NULL);
+    if(alt && wglMakeContextCurrentARB)
+      wglMakeContextCurrentARB(NULL, NULL, NULL);
+    else
+      makeCurrent(NULL, NULL);
     return;
   }
 
@@ -270,7 +273,10 @@ void OpenGLGraphicsTest::ActivateContext(GraphicsWindow *win, void *ctx)
 
   HDC dc = GetDC(win32win->wnd);
 
-  makeCurrent(dc, (HGLRC)ctx);
+  if(alt && wglMakeContextCurrentARB)
+    wglMakeContextCurrentARB(dc, dc, (HGLRC)ctx);
+  else
+    makeCurrent(dc, (HGLRC)ctx);
 
   ReleaseDC(win32win->wnd, dc);
 }

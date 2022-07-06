@@ -13,6 +13,34 @@
   <property name="windowTitle">
    <string>Buffer Viewer</string>
   </property>
+  <widget class="RDTreeWidget" name="fixedVars">
+   <property name="geometry">
+    <rect>
+     <x>510</x>
+     <y>150</y>
+     <width>191</width>
+     <height>71</height>
+    </rect>
+   </property>
+   <property name="editTriggers">
+    <set>QAbstractItemView::NoEditTriggers</set>
+   </property>
+   <property name="showDropIndicator" stdset="0">
+    <bool>false</bool>
+   </property>
+   <property name="selectionMode">
+    <enum>QAbstractItemView::ContiguousSelection</enum>
+   </property>
+   <property name="verticalScrollMode">
+    <enum>QAbstractItemView::ScrollPerPixel</enum>
+   </property>
+   <property name="allColumnsShowFocus">
+    <bool>true</bool>
+   </property>
+   <attribute name="headerStretchLastSection">
+    <bool>false</bool>
+   </attribute>
+  </widget>
   <widget class="RDTableView" name="vsinData">
    <property name="geometry">
     <rect>
@@ -819,6 +847,29 @@ Enter 0.0 to use automatic/guessed value derived from data.</string>
      </widget>
     </item>
     <item>
+     <widget class="QToolButton" name="showPadding">
+      <property name="enabled">
+       <bool>true</bool>
+      </property>
+      <property name="toolTip">
+       <string>Show visible padding</string>
+      </property>
+      <property name="icon">
+       <iconset resource="../Resources/resources.qrc">
+        <normaloff>:/align.png</normaloff>:/align.png</iconset>
+      </property>
+      <property name="checkable">
+       <bool>true</bool>
+      </property>
+      <property name="checked">
+       <bool>false</bool>
+      </property>
+      <property name="autoRaise">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
      <widget class="QToolButton" name="syncViews">
       <property name="enabled">
        <bool>true</bool>
@@ -841,6 +892,22 @@ Enter 0.0 to use automatic/guessed value derived from data.</string>
       </property>
       <property name="toolButtonStyle">
        <enum>Qt::ToolButtonTextBesideIcon</enum>
+      </property>
+      <property name="autoRaise">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="setFormat">
+      <property name="text">
+       <string>{}</string>
+      </property>
+      <property name="checkable">
+       <bool>true</bool>
+      </property>
+      <property name="toolButtonStyle">
+       <enum>Qt::ToolButtonTextOnly</enum>
       </property>
       <property name="autoRaise">
        <bool>true</bool>
@@ -1001,7 +1068,7 @@ Enter 0.0 to use automatic/guessed value derived from data.</string>
     <rect>
      <x>139</x>
      <y>160</y>
-     <width>521</width>
+     <width>361</width>
      <height>61</height>
     </rect>
    </property>
@@ -1022,6 +1089,11 @@ Enter 0.0 to use automatic/guessed value derived from data.</string>
    <class>RDTableView</class>
    <extends>QTableView</extends>
    <header>Widgets/Extended/RDTableView.h</header>
+  </customwidget>
+  <customwidget>
+   <class>RDTreeWidget</class>
+   <extends>QTreeView</extends>
+   <header>Widgets/Extended/RDTreeWidget.h</header>
   </customwidget>
   <customwidget>
    <class>BufferFormatSpecifier</class>

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -87,7 +87,7 @@ SDBGChunk::SDBGChunk(void *data)
         rdcstr(asciiDatabase + m_FileHeaders[i].filenameOffset, m_FileHeaders[i].filenameLen);
     rdcstr source = rdcstr(asciiDatabase + m_FileHeaders[i].sourceOffset, m_FileHeaders[i].sourceLen);
 
-    this->Files.push_back(make_rdcpair(filename, source));
+    this->Files.push_back({filename, source});
   }
 
   // successful grab of info

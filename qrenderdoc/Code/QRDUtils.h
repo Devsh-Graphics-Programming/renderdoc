@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,12 @@
 #include <QSortFilterProxyModel>
 #include <QStyledItemDelegate>
 #include "Code/Interface/QRDInterface.h"
+
+#if !defined(RELEASE)
+#define ENABLE_UNIT_TESTS 1
+#else
+#define ENABLE_UNIT_TESTS 0
+#endif
 
 class QHeaderView;
 
@@ -74,47 +80,171 @@ inline QMetaType::Type GetVariantMetatype(const QVariant &v)
   return (QMetaType::Type)v.type();
 }
 
+namespace Packing
+{
+// see note in Rules below
+enum APIConfig
+{
+  //  property  | vector_align_component | vector_straddle_16b | tight_arrays | trailing_overlap
+  std140,    // |         false          |        false        |     false    |      false
+  std430,    // |         false          |        false        |      true    |      false
+  D3DCB,     // |          true          |        false        |     false    |       true
+  C,         // |          true          |         true        |      true    |      false
+  Scalar,    // |          true          |         true        |      true    |       true
+
+  // D3D UAVs are assumed to be the same as C packing. With only 4 and 8 byte types this can't be
+  // fully verified and it's not documented at all.
+  D3DUAV = C,
+};
+
+// individual rules for packing. In general, true is more lenient on packing than false for each
+// property, though struct_aligned is an exception (in that case true is more 'sensible')
+// NOTE: If any of these rules or the above APIConfigs change, make sure to update
+// BufferFormatter::EstimatePackingRules
+struct Rules
+{
+  Rules() = default;
+  Rules(APIConfig config)
+  {
+    // default to the most conservative packing ruleset
+
+    switch(config)
+    {
+      case std140: { break;
+      }
+      case std430:
+      {
+        tight_arrays = true;
+        break;
+      }
+      case D3DCB:
+      {
+        vector_align_component = true;
+        trailing_overlap = true;
+        break;
+      }
+      case C:
+      {
+        vector_align_component = true;
+        vector_straddle_16b = true;
+        tight_arrays = true;
+        break;
+      }
+      case Scalar:
+      {
+        vector_align_component = true;
+        vector_straddle_16b = true;
+        tight_arrays = true;
+        trailing_overlap = true;
+        break;
+      }
+    }
+  }
+
+  bool operator==(Packing::Rules o) const
+  {
+    return vector_align_component == o.vector_align_component &&
+           vector_straddle_16b == o.vector_straddle_16b && tight_arrays == o.tight_arrays &&
+           trailing_overlap == o.trailing_overlap;
+  }
+  bool operator!=(Packing::Rules o) const { return !(*this == o); }
+  // is a vector's alignment equal to its component alignment? If not, vectors must have an
+  // a larger alignment e.g. for floats a float2 has 8 byte alignment, float3 and float4 have
+  // 16-byte alignment
+  bool vector_align_component = false;
+
+  // can vectors straddle a 16-byte boundary?
+  // if not, offsets of vectors are padded as necessary so they do not cross the boundary
+  //
+  // note that vectors can only straddle the 16-byte boundary if they are not component aligned, so
+  // this can only be true if vector_align_component is also true.
+  bool vector_straddle_16b = false;
+
+  // are arrays packed tightly with all elements contiguous? if not, each element starts on a
+  // 16-byte aligned offset
+  bool tight_arrays = false;
+
+  // do non-tightly packed arrays and structs have reserved padding up to a multiple of their
+  // alignment?
+  // if so, subsequent elements must be placed after that padding region, if not subsequent elements
+  // can be inside that padding region.
+  //
+  // For D3D this is allowed for cbuffers, but *not* for UAVs/structured types. This is only
+  // applicable for structs since structured types have tight arrays, but in that case trailing
+  // padding is not usable - matching C
+  //
+  // note this is compatible with C packing for structs (C structs have a size that includes their
+  // trailing padding and members after a struct are not packed in that padding). For arrays it does
+  // not apply since C arrays are packed.
+  bool trailing_overlap = false;
+};
+
+};    // namespace Packing
+
+struct ParsedFormat
+{
+  ShaderConstant fixed, repeating;
+  Packing::Rules packing;
+  QMap<int, QString> errors;
+};
+
+struct StructFormatData;
+
 struct BufferFormatter
 {
+private:
   Q_DECLARE_TR_FUNCTIONS(BufferFormatter);
 
   static GraphicsAPI m_API;
 
-  static QString DeclareStruct(QList<QString> &declaredStructs, const QString &name,
+  static bool CheckInvalidUnbounded(const StructFormatData &structDef,
+                                    const QMap<QString, StructFormatData> &structelems,
+                                    QMap<int, QString> &errors);
+  static bool ContainsUnbounded(const ShaderConstant &structType,
+                                rdcpair<rdcstr, rdcstr> *found = NULL);
+
+  static QString DeclareStruct(Packing::Rules pack, QList<QString> &declaredStructs,
+                               QMap<ShaderConstant, QString> &anonStructs, const QString &name,
                                const rdcarray<ShaderConstant> &members, uint32_t requiredByteStride,
                                QString innerSkippedPrefixString);
 
-  static uint32_t GetVarSize(const ShaderConstant &var);
+  static uint32_t GetAlignment(Packing::Rules pack, const ShaderConstant &constant);
+  static uint32_t GetUnpaddedStructAdvance(Packing::Rules pack,
+                                           const rdcarray<ShaderConstant> &members);
+  static uint32_t GetVarStraddleSize(const ShaderConstant &var);
+  static uint32_t GetVarSizeAndTrail(const ShaderConstant &var);
+
+  static void EstimatePackingRules(Packing::Rules &pack, const ShaderConstant &constant);
+  static QString DeclarePacking(Packing::Rules pack);
 
 public:
   BufferFormatter() = default;
 
   static void Init(GraphicsAPI api) { m_API = api; }
-  static ShaderConstant ParseFormatString(const QString &formatString, uint64_t maxLen,
-                                          bool tightPacking, QString &errors);
+  static ParsedFormat ParseFormatString(const QString &formatString, uint64_t maxLen, bool cbuffer);
+  static uint32_t GetVarAdvance(Packing::Rules pack, const ShaderConstant &var);
+
+  static Packing::Rules EstimatePackingRules(const rdcarray<ShaderConstant> &members);
+  static void EstimatePackingRules(Packing::Rules &pack, const rdcarray<ShaderConstant> &members);
 
   static QString GetTextureFormatString(const TextureDescription &tex);
-  static QString GetBufferFormatString(const ShaderResource &res, const ResourceFormat &viewFormat,
-                                       uint64_t &baseByteOffset);
+  static QString GetBufferFormatString(Packing::Rules pack, const ShaderResource &res,
+                                       const ResourceFormat &viewFormat);
 
-  static QString DeclareStruct(const QString &name, const rdcarray<ShaderConstant> &members,
-                               uint32_t requiredByteStride);
-
-  static uint32_t GetStructVarSize(const rdcarray<ShaderConstant> &members);
-
-  static QString DeclarePaddingBytes(uint32_t bytes);
+  static QString DeclareStruct(Packing::Rules pack, const QString &name,
+                               const rdcarray<ShaderConstant> &members, uint32_t requiredByteStride);
 };
 
-QVariantList GetVariants(ResourceFormat format, const ShaderConstantDescriptor &varDesc,
-                         const byte *&data, const byte *end);
+QVariantList GetVariants(ResourceFormat format, const ShaderConstant &var, const byte *&data,
+                         const byte *end);
 ResourceFormat GetInterpretedResourceFormat(const ShaderConstant &elem);
 void SetInterpretedResourceFormat(ShaderConstant &elem, ResourceFormatType interpretType,
                                   CompType interpretCompType);
 ShaderVariable InterpretShaderVar(const ShaderConstant &elem, const byte *data, const byte *end);
 
-QString TypeString(const ShaderVariable &v);
+QString TypeString(const ShaderVariable &v, const ShaderConstant &c = ShaderConstant());
 QString RowString(const ShaderVariable &v, uint32_t row, VarType type = VarType::Unknown);
-QString VarString(const ShaderVariable &v);
+QString VarString(const ShaderVariable &v, const ShaderConstant &c);
 QString RowTypeString(const ShaderVariable &v);
 
 QString TypeString(const SigParameter &sig);
@@ -174,6 +304,14 @@ struct GPUAddress
   void cacheAddress(const QWidget *widget);
 };
 
+struct EnumInterpValue
+{
+  QString str;
+  uint64_t val;
+};
+
+Q_DECLARE_METATYPE(EnumInterpValue);
+
 ICaptureContext *getCaptureContext(const QWidget *widget);
 
 // this will check the variant, and if it contains a ResourceId directly or text with ResourceId
@@ -228,6 +366,7 @@ struct Formatter
   static void shutdown();
 
   static QString Format(double f, bool hex = false);
+  static QString Format(rdhalf f, bool hex = false) { return Format((float)f, hex); }
   static QString HumanFormat(uint64_t u);
   static QString Format(uint64_t u, bool hex = false)
   {
@@ -255,6 +394,22 @@ struct Formatter
     else
       return Format(u, true);
   }
+  static QString BinFormat(uint64_t u, uint32_t byteSize)
+  {
+    return QFormatStr("%1").arg(u, byteSize * 8, 2, QLatin1Char('0')).toUpper();
+  }
+  static QString BinFormat(uint64_t u) { return BinFormat(u, 8); }
+  static QString BinFormat(uint32_t u) { return BinFormat(u, 4); }
+  static QString BinFormat(uint16_t u) { return BinFormat(u, 2); }
+  static QString BinFormat(uint8_t u) { return BinFormat(u, 1); }
+  static QString BinFormat(int64_t i) { return Format(i); }
+  static QString BinFormat(int32_t i) { return Format(i); }
+  static QString BinFormat(int16_t i) { return Format(i); }
+  static QString BinFormat(int8_t i) { return Format(i); }
+  static QString BinFormat(float f) { return Format(f); }
+  static QString BinFormat(rdhalf f) { return Format(f); }
+  static QString BinFormat(double d) { return Format(d); }
+  static QString BinFormat(bool b) { return b ? lit("true") : lit("false"); }
   static QString Format(int32_t i, bool hex = false) { return QString::number(i); }
   static QString Format(int64_t i, bool hex = false) { return QString::number(i); }
   static const QFont &PreferredFont() { return *m_Font; }
@@ -562,6 +717,17 @@ public:
 
 private:
   QAbstractItemDelegate *m_delegate = NULL;
+};
+
+class FullEditorDelegate : public QStyledItemDelegate
+{
+private:
+  Q_OBJECT
+
+public:
+  FullEditorDelegate(QWidget *parent);
+  QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                        const QModelIndex &index) const;
 };
 
 // delegate that will handle painting, hovering and clicking on rich text items.

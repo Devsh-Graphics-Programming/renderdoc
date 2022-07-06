@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
+#include <limits>
 #include "3rdparty/fmt/core.h"
 #include "vk_test.h"
 
@@ -110,7 +111,7 @@ layout(set = 0, binding = 10, std140) uniform constsbuf
   vec4 first;
   uint uniformIndex;
   vec4 second;
-  vec4 pad2;
+  vec4 nan;
   vec4 third;
   vec4 pad3;
   vec4 fourth;
@@ -165,6 +166,8 @@ layout(set = 0, r32ui, binding = 22) uniform uimage2D atomicimg;
 
 layout(set = 0, binding = 30) uniform sampler2DArray queryTest;
 layout(set = 0, binding = 31) uniform sampler2DMSArray queryTestMS;
+
+layout(set = 0, binding = 32) uniform texture2D depthImage;
 
 #if TEST_DESC_INDEXING
 
@@ -317,6 +320,7 @@ void main()
   float  posinf = linearData.oneVal/linearData.zeroVal.x;
   float  neginf = linearData.negoneVal/linearData.zeroVal.x;
   float  nan = linearData.zeroVal.x/linearData.zeroVal.y;
+  nan *= cbuf.nan.x;
 
   float negone = linearData.negoneVal;
   float posone = linearData.oneVal;
@@ -507,7 +511,7 @@ void main()
     case 30:
     {
       Color = cbuf.first + cbuf.second + cbuf.third + cbuf.fourth +
-              cbuf.pad2 + cbuf.pad3;
+              cbuf.pad3;
       break;
     }
     case 31:
@@ -1086,10 +1090,10 @@ void main()
     }
     case 112:
     {
-      float x = texture(sampler2DShadow(sampledImage, shadowSampler), vec3(inpos, 0.1f));
-      float y = texture(sampler2DShadow(sampledImage, shadowSampler), vec3(inpos, 0.3f));
-      float z = texture(sampler2DShadow(sampledImage, shadowSampler), vec3(inpos, 0.7f));
-      float w = texture(sampler2DShadow(sampledImage, shadowSampler), vec3(inpos, 0.9f));
+      float x = texture(sampler2DShadow(depthImage, shadowSampler), vec3(inpos, 0.1f));
+      float y = texture(sampler2DShadow(depthImage, shadowSampler), vec3(inpos, 0.3f));
+      float z = texture(sampler2DShadow(depthImage, shadowSampler), vec3(inpos, 0.7f));
+      float w = texture(sampler2DShadow(depthImage, shadowSampler), vec3(inpos, 0.9f));
       Color = vec4(x, y, z, w);
       break;
     }
@@ -1118,7 +1122,7 @@ void main()
     {
       vec2 coord = vec2(zerof + 0.6, zerof + 0.43);
 
-      Color = textureGather(sampler2DShadow(sampledImage, shadowSampler), coord, 0.8f);
+      Color = textureGather(sampler2DShadow(depthImage, shadowSampler), coord, 0.8f);
       break;
     }
     case 117:
@@ -3163,7 +3167,7 @@ OpDecorate %cbuffer Binding 10
 OpMemberDecorate %cbuffer_struct 0 Offset 0       ; vec4 first
 OpMemberDecorate %cbuffer_struct 1 Offset 16      ; vec4 pad1
 OpMemberDecorate %cbuffer_struct 2 Offset 32      ; vec4 second
-OpMemberDecorate %cbuffer_struct 3 Offset 48      ; vec4 pad2
+OpMemberDecorate %cbuffer_struct 3 Offset 48      ; vec4 nan
 OpMemberDecorate %cbuffer_struct 4 Offset 64      ; vec4 third
 OpMemberDecorate %cbuffer_struct 5 Offset 80      ; vec4 pad3
 OpMemberDecorate %cbuffer_struct 6 Offset 96      ; vec4 fourth
@@ -3278,7 +3282,16 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
 
    %posinf = OpFDiv %float %oneVal %zerof
    %neginf = OpFDiv %float %negoneVal %zerof
-      %nan = OpFDiv %float %zerof %zerof
+
+ ; NaN generation is hard and we want to avoid compilers compiling it out, so generate
+ ; it in shader and multiply by one from a UBO so we get NaN either way
+ ; (since NaN * anything = NaN)
+ %nan_shad = OpFDiv %float %zerof %zerof
+
+  %nan_ptr = OpAccessChain %ptr_Uniform_float4 %cbuffer %uint_3
+  %nan_ubo = OpLoad %float4 %nan_ptr
+%nan_ubo_x = OpCompositeExtract %float %nan_ubo 0
+      %nan = OpFMul %float %nan_shad %nan_ubo_x
 
 %intval_ptr = OpAccessChain %ptr_Input_uint %flatData %flatv2f_intval_idx
     %intval = OpLoad %uint %intval_ptr
@@ -3584,6 +3597,7 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
         {22, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {30, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {31, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {32, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     }));
 
     std::vector<VkDescriptorSetLayout> setLayouts = {setlayout0};
@@ -3803,6 +3817,17 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
                                                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
                               VmaAllocationCreateInfo({0, VMA_MEMORY_USAGE_CPU_TO_GPU}));
 
+    AllocatedImage shadowimg(this,
+                             vkh::ImageCreateInfo(16, 16, 0, VK_FORMAT_D32_SFLOAT,
+                                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                                      VK_IMAGE_USAGE_SAMPLED_BIT),
+                             VmaAllocationCreateInfo({0, VMA_MEMORY_USAGE_GPU_ONLY}));
+
+    VkImageView shadowview = createImageView(
+        vkh::ImageViewCreateInfo(shadowimg.image, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_D32_SFLOAT, {},
+                                 vkh::ImageSubresourceRange(VK_IMAGE_ASPECT_DEPTH_BIT)));
+
     uploadBuf.upload(rgba8.data.data(), rgba8.data.size() * sizeof(uint32_t));
 
     std::vector<byte> typeData;
@@ -3952,6 +3977,7 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
 
     cbufferdata[1] = Vec4f(1.1f, 2.2f, 3.3f, 4.4f);
     cbufferdata[2] = Vec4f(5.5f, 6.6f, 7.7f, 8.8f);
+    cbufferdata[3] = Vec4f(std::numeric_limits<float>::quiet_NaN());
     cbufferdata[4] = Vec4f(9.9f, 9.99f, 9.999f, 9.999f);
     cbufferdata[6] = Vec4f(100.0f, 200.0f, 300.0f, 400.0f);
 
@@ -4102,6 +4128,9 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
             vkh::WriteDescriptorSet(
                 descset0, 31, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 {vkh::DescriptorImageInfo(queryTestMSView, VK_IMAGE_LAYOUT_GENERAL, mipsampler)}),
+            vkh::WriteDescriptorSet(
+                descset0, 32, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                {vkh::DescriptorImageInfo(shadowview, VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE)}),
         });
 
     if(descIndexing)
@@ -4128,8 +4157,7 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
                                               linearsampler)}),
                 vkh::WriteDescriptorSet(
                     descset1, 3, i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                    {vkh::DescriptorImageInfo(smileyview, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                              VK_NULL_HANDLE)}),
+                    {vkh::DescriptorImageInfo(shadowview, VK_IMAGE_LAYOUT_GENERAL, VK_NULL_HANDLE)}),
                 vkh::WriteDescriptorSet(
                     descset1, 4, i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     {vkh::DescriptorImageInfo(smileyview, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -4183,6 +4211,10 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
               vkh::ImageMemoryBarrier(VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
                                       VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                                       VK_IMAGE_LAYOUT_GENERAL, storezoo_u2D.image),
+              vkh::ImageMemoryBarrier(VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                                      VK_IMAGE_LAYOUT_GENERAL, shadowimg.image,
+                                      vkh::ImageSubresourceRange(VK_IMAGE_ASPECT_DEPTH_BIT)),
           },
           {
               vkh::BufferMemoryBarrier(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
@@ -4192,6 +4224,10 @@ OpMemberDecorate %cbuffer_struct 17 Offset 216    ; double doublePackSource
               vkh::BufferMemoryBarrier(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
                                        VK_ACCESS_TRANSFER_WRITE_BIT, store_texbuffer.buffer),
           });
+
+      vkCmdClearDepthStencilImage(cmd, shadowimg.image, VK_IMAGE_LAYOUT_GENERAL,
+                                  vkh::ClearDepthStencilValue({0.5f, 0}), 1,
+                                  vkh::ImageSubresourceRange(VK_IMAGE_ASPECT_DEPTH_BIT));
 
       vkCmdClearColorImage(cmd, store_image.image, VK_IMAGE_LAYOUT_GENERAL,
                            vkh::ClearColorValue(6.66f, 6.66f, 6.66f, 6.66f), 1,

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -298,11 +298,11 @@ private:
       RDCDEBUG("Intercepting %s", entryPoint);
 
       // inherit logfile and capture options
-      rdcpair<ReplayStatus, uint32_t> res = Process::InjectIntoProcess(
+      rdcpair<RDResult, uint32_t> res = Process::InjectIntoProcess(
           lpProcessInformation->dwProcessId, {}, RenderDoc::Inst().GetCaptureFileTemplate(),
           RenderDoc::Inst().GetCaptureOptions(), false);
 
-      if(res.first == ReplayStatus::Succeeded)
+      if(res.first == ResultCode::Succeeded)
         RenderDoc::Inst().AddChildProcess((uint32_t)lpProcessInformation->dwProcessId, res.second);
     }
 

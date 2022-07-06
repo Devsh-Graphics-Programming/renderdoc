@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -103,7 +103,7 @@ struct Type
   const Type *inner = NULL;
 
   // struct or function
-  bool packedStruct = false, vararg = false;
+  bool packedStruct = false, vararg = false, opaque = false;
   uint16_t id = 0xFFFF;
   rdcstr name;
   rdcarray<const Type *> members;    // the members for a struct, the parameters for functions
@@ -673,6 +673,7 @@ public:
 
   const Metadata *GetMetadataByName(const rdcstr &name) const;
   size_t GetMetadataCount() const { return m_Metadata.size() + m_NamedMeta.size(); }
+  uint32_t GetDirectHeapAcessCount() const { return m_directHeapAccessCount; }
 protected:
   void MakeDisassemblyString();
 
@@ -703,6 +704,7 @@ protected:
   rdcarray<Alias> m_Aliases;
   rdcarray<Value> m_Values;
   rdcarray<rdcstr> m_Sections;
+  uint32_t m_directHeapAccessCount = 0;
 
   rdcarray<rdcstr> m_Kinds;
 

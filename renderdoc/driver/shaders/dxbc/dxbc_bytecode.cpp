@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -489,13 +489,13 @@ DXBC::Reflection *Program::GuessReflection()
           DXBC::CBufferVariable var;
           var.name = cb.name;
           var.offset = 0;
-          var.type.descriptor.varClass = DXBC::VariableClass::CLASS_STRUCT;
-          var.type.descriptor.varType = VarType::Unknown;
-          var.type.descriptor.rows = 1;
-          var.type.descriptor.cols = 4;
-          var.type.descriptor.elements = 1;
-          var.type.descriptor.bytesize = 4 * sizeof(float);
-          var.type.descriptor.name = "struct";
+          var.type.varClass = DXBC::VariableClass::CLASS_STRUCT;
+          var.type.varType = VarType::Unknown;
+          var.type.rows = 1;
+          var.type.cols = 4;
+          var.type.elements = 1;
+          var.type.bytesize = 4 * sizeof(float);
+          var.type.name = "struct";
           cb.variables.push_back(var);
         }
         rdcarray<DXBC::CBufferVariable> &fillVars =
@@ -510,13 +510,13 @@ DXBC::Reflection *Program::GuessReflection()
 
           var.offset = 4 * sizeof(float) * v;
 
-          var.type.descriptor.bytesize = 4 * sizeof(float);
-          var.type.descriptor.rows = 1;
-          var.type.descriptor.cols = 4;
-          var.type.descriptor.elements = 0;
-          var.type.descriptor.varType = VarType::Float;
-          var.type.descriptor.varClass = DXBC::CLASS_VECTOR;
-          var.type.descriptor.name = TypeName(var.type.descriptor);
+          var.type.bytesize = 4 * sizeof(float);
+          var.type.rows = 1;
+          var.type.cols = 4;
+          var.type.elements = 0;
+          var.type.varType = VarType::Float;
+          var.type.varClass = DXBC::CLASS_VECTOR;
+          var.type.name = TypeName(var.type);
 
           fillVars.push_back(var);
         }

@@ -100,6 +100,7 @@ VA_IGNORE_REST_OF_FILE
 %ignore rdcfixedarray::operator[];
 %ignore rdcliteral;
 %ignore rdcpair;
+%ignore rdhalf;
 %ignore bytebuf;
 
 // special handling for RENDERDOC_GetDefaultCaptureOptions to transform output parameter to a return value
@@ -153,6 +154,11 @@ VA_IGNORE_REST_OF_FILE
 %ignore StructuredBufferList::~StructuredBufferList;
 %ignore StructuredChunkList::StructuredChunkList;
 %ignore StructuredChunkList::~StructuredChunkList;
+
+// don't allow user code to create ResultDetails objects (they can't allocate the string)
+// or access the internal message, which we can't hide as ResultDetails must be POD.
+%ignore ResultDetails::ResultDetails;
+%ignore ResultDetails::internal_msg;
 
 // these objects return a new copy which the python caller should own.
 %newobject SDObject::Duplicate;
@@ -331,6 +337,7 @@ TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, ResourceId, 8)
 TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, bool, 4)
 TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, bool, 8)
 TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, float, 16)
+TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, rdhalf, 16)
 TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, int32_t, 16)
 TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, uint32_t, 16)
 TEMPLATE_FIXEDARRAY_INSTANTIATE(rdcfixedarray, double, 16)
@@ -373,6 +380,7 @@ TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderMessage)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderResource)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderSampler)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderSourceFile)
+TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderSourcePrefix)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderVariable)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderEncoding)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ShaderVariableChange)
@@ -385,6 +393,7 @@ TEMPLATE_ARRAY_INSTANTIATE(rdcarray, Viewport)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, Scissor)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, ColorBlend)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, BoundVBuffer)
+TEMPLATE_ARRAY_INSTANTIATE(rdcarray, Offset)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, VertexInputAttribute)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, BoundResource)
 TEMPLATE_ARRAY_INSTANTIATE(rdcarray, BoundResourceArray)

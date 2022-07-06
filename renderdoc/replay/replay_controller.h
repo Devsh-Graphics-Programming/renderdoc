@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -46,13 +46,13 @@ public:
   rdcpair<int32_t, int32_t> GetDimensions();
 
   void ClearThumbnails();
-  bool AddThumbnail(WindowingData window, ResourceId texID, const Subresource &sub,
-                    CompType typeCast);
+  ResultDetails AddThumbnail(WindowingData window, ResourceId texID, const Subresource &sub,
+                             CompType typeCast);
 
   void Display();
 
   ReplayOutputType GetType() { return m_Type; }
-  bool SetPixelContext(WindowingData window);
+  ResultDetails SetPixelContext(WindowingData window);
   void SetPixelContextLocation(uint32_t x, uint32_t y);
   void DisablePixelContext();
 
@@ -79,6 +79,7 @@ private:
 
   ReplayController *m_pController;
 
+  bool m_CustomDirty;
   bool m_OverlayDirty;
   bool m_ForceOverlayRefresh;
 
@@ -129,8 +130,8 @@ public:
 
   APIProperties GetAPIProperties();
 
-  ReplayStatus CreateDevice(RDCFile *rdc, const ReplayOptions &opts);
-  ReplayStatus SetDevice(IReplayDriver *device);
+  RDResult CreateDevice(RDCFile *rdc, const ReplayOptions &opts);
+  RDResult SetDevice(IReplayDriver *device);
 
   void FileChanged();
 
@@ -153,6 +154,7 @@ public:
   void FreeCustomShader(ResourceId id);
 
   rdcarray<ShaderEncoding> GetCustomShaderEncodings();
+  rdcarray<ShaderSourcePrefix> GetCustomShaderSourcePrefixes();
   rdcarray<ShaderEncoding> GetTargetShaderEncodings();
   rdcpair<ResourceId, rdcstr> BuildTargetShader(const rdcstr &entry, ShaderEncoding sourceEncoding,
                                                 bytebuf source,
@@ -173,7 +175,14 @@ public:
   const rdcarray<BufferDescription> &GetBuffers();
   const rdcarray<ResourceDescription> &GetResources();
   rdcarray<DebugMessage> GetDebugMessages();
-  ReplayStatus GetFatalErrorStatus() { return m_FatalError; }
+  ResultDetails GetFatalErrorStatus()
+  {
+    // don't reconvert this on return every time, or we would cache many strings if this function is
+    // repeatedly called (which it is intended to be)
+    if(m_FatalError.code != m_FatalErrorResult.code)
+      m_FatalErrorResult = m_FatalError;
+    return m_FatalErrorResult;
+  }
   rdcarray<ShaderEntryPoint> GetShaderEntryPoints(ResourceId shader);
   const ShaderReflection *GetShader(ResourceId pipeline, ResourceId shader, ShaderEntryPoint entry);
 
@@ -199,7 +208,7 @@ public:
   bytebuf GetBufferData(ResourceId buff, uint64_t offset, uint64_t len);
   bytebuf GetTextureData(ResourceId buff, const Subresource &sub);
 
-  bool SaveTexture(const TextureSave &saveData, const rdcstr &path);
+  ResultDetails SaveTexture(const TextureSave &saveData, const rdcstr &path);
 
   rdcarray<ShaderVariable> GetCBufferVariableContents(ResourceId pipeline, ResourceId shader,
                                                       ShaderStage stage, const rdcstr &entryPoint,
@@ -222,7 +231,7 @@ public:
 
 private:
   virtual ~ReplayController();
-  ReplayStatus PostCreateInit(IReplayDriver *device, RDCFile *rdc);
+  RDResult PostCreateInit(IReplayDriver *device, RDCFile *rdc);
 
   void FetchPipelineState(uint32_t eventId);
 
@@ -242,7 +251,8 @@ private:
   int32_t m_ReplayLoopCancel = 0;
   int32_t m_ReplayLoopFinished = 0;
 
-  ReplayStatus m_FatalError = ReplayStatus::Succeeded;
+  RDResult m_FatalError = ResultCode::Succeeded;
+  ResultDetails m_FatalErrorResult = {ResultCode::Succeeded};
 
   uint32_t m_EventID;
 

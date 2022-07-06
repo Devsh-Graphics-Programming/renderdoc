@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2017-2021 Baldur Karlsson
+ * Copyright (c) 2017-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -52,15 +52,6 @@ class undersized
 #else
 #define SIZE_CHECK(expected)
 #endif
-
-template <class SerialiserType>
-void DoSerialise(SerialiserType &ser, ExecuteResult &el)
-{
-  SERIALISE_MEMBER(status);
-  SERIALISE_MEMBER(ident);
-
-  SIZE_CHECK(8);
-}
 
 template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, PathEntry &el)
@@ -170,27 +161,17 @@ void DoSerialise(SerialiserType &ser, SigParameter &el)
 }
 
 template <typename SerialiserType>
-void DoSerialise(SerialiserType &ser, ShaderConstantDescriptor &el)
+void DoSerialise(SerialiserType &ser, ShaderConstantType &el)
 {
-  SERIALISE_MEMBER(type);
+  SERIALISE_MEMBER(baseType);
   SERIALISE_MEMBER(rows);
   SERIALISE_MEMBER(columns);
   SERIALISE_MEMBER(matrixByteStride);
-  SERIALISE_MEMBER(rowMajorStorage);
   SERIALISE_MEMBER(elements);
   SERIALISE_MEMBER(arrayByteStride);
   SERIALISE_MEMBER(name);
-  SERIALISE_MEMBER(displayAsHex);
-  SERIALISE_MEMBER(displayAsRGB);
+  SERIALISE_MEMBER(flags);
   SERIALISE_MEMBER(pointerTypeID);
-
-  SIZE_CHECK(48);
-}
-
-template <typename SerialiserType>
-void DoSerialise(SerialiserType &ser, ShaderConstantType &el)
-{
-  SERIALISE_MEMBER(descriptor);
   SERIALISE_MEMBER(members);
 
   SIZE_CHECK(72);
@@ -201,6 +182,8 @@ void DoSerialise(SerialiserType &ser, ShaderConstant &el)
 {
   SERIALISE_MEMBER(name);
   SERIALISE_MEMBER(byteOffset);
+  SERIALISE_MEMBER(bitFieldOffset);
+  SERIALISE_MEMBER(bitFieldSize);
   SERIALISE_MEMBER(defaultValue);
   SERIALISE_MEMBER(type);
 
@@ -329,9 +312,7 @@ void DoSerialise(SerialiserType &ser, ShaderVariable &el)
   SERIALISE_MEMBER(name);
   SERIALISE_MEMBER(type);
 
-  SERIALISE_MEMBER(displayAsHex);
-  SERIALISE_MEMBER(isStruct);
-  SERIALISE_MEMBER(rowMajor);
+  SERIALISE_MEMBER(flags);
 
   SERIALISE_MEMBER(value.u64v);
 
@@ -811,6 +792,15 @@ void DoSerialise(SerialiserType &ser, MeshFormat &el)
   SERIALISE_MEMBER(showAlpha);
 
   SIZE_CHECK(128);
+}
+
+template <typename SerialiserType>
+void DoSerialise(SerialiserType &ser, Offset &el)
+{
+  SERIALISE_MEMBER(x);
+  SERIALISE_MEMBER(y);
+
+  SIZE_CHECK(8);
 }
 
 template <typename SerialiserType>
@@ -1983,12 +1973,14 @@ template <typename SerialiserType>
 void DoSerialise(SerialiserType &ser, VKPipe::Pipeline &el)
 {
   SERIALISE_MEMBER(pipelineResourceId);
-  SERIALISE_MEMBER(pipelineLayoutResourceId);
+  SERIALISE_MEMBER(pipelineComputeLayoutResourceId);
+  SERIALISE_MEMBER(pipelinePreRastLayoutResourceId);
+  SERIALISE_MEMBER(pipelineFragmentLayoutResourceId);
   SERIALISE_MEMBER(flags);
 
   SERIALISE_MEMBER(descriptorSets);
 
-  SIZE_CHECK(48);
+  SIZE_CHECK(64);
 }
 
 template <typename SerialiserType>
@@ -2067,8 +2059,9 @@ void DoSerialise(SerialiserType &ser, VKPipe::Shader &el)
   SERIALISE_MEMBER(pushConstantRangeByteOffset);
   SERIALISE_MEMBER(pushConstantRangeByteSize);
   SERIALISE_MEMBER(specializationData);
+  SERIALISE_MEMBER(specializationIds);
 
-  SIZE_CHECK(200);
+  SIZE_CHECK(224);
 }
 
 template <typename SerialiserType>
@@ -2143,7 +2136,10 @@ void DoSerialise(SerialiserType &ser, VKPipe::Rasterizer &el)
   SERIALISE_MEMBER(lineStippleFactor);
   SERIALISE_MEMBER(lineStipplePattern);
 
-  SIZE_CHECK(52);
+  SERIALISE_MEMBER(pipelineShadingRate);
+  SERIALISE_MEMBER(shadingRateCombiners);
+
+  SIZE_CHECK(68);
 }
 
 template <typename SerialiserType>
@@ -2209,10 +2205,14 @@ void DoSerialise(SerialiserType &ser, VKPipe::RenderPass &el)
   SERIALISE_MEMBER(colorAttachments);
   SERIALISE_MEMBER(resolveAttachments);
   SERIALISE_MEMBER(depthstencilAttachment);
+  SERIALISE_MEMBER(depthstencilResolveAttachment);
   SERIALISE_MEMBER(fragmentDensityAttachment);
+  SERIALISE_MEMBER(shadingRateAttachment);
+  SERIALISE_MEMBER(shadingRateTexelSize);
   SERIALISE_MEMBER(multiviews);
+  SERIALISE_MEMBER(fragmentDensityOffsets);
 
-  SIZE_CHECK(120);
+  SIZE_CHECK(160);
 }
 
 template <typename SerialiserType>
@@ -2262,7 +2262,7 @@ void DoSerialise(SerialiserType &ser, VKPipe::CurrentPass &el)
   SERIALISE_MEMBER(framebuffer);
   SERIALISE_MEMBER(renderArea);
 
-  SIZE_CHECK(184);
+  SIZE_CHECK(224);
 }
 
 template <typename SerialiserType>
@@ -2330,12 +2330,11 @@ void DoSerialise(SerialiserType &ser, VKPipe::State &el)
 
   SERIALISE_MEMBER(conditionalRendering);
 
-  SIZE_CHECK(2008);
+  SIZE_CHECK(2240);
 }
 
 #pragma endregion Vulkan pipeline state
 
-INSTANTIATE_SERIALISE_TYPE(ExecuteResult)
 INSTANTIATE_SERIALISE_TYPE(PathEntry)
 INSTANTIATE_SERIALISE_TYPE(SectionProperties)
 INSTANTIATE_SERIALISE_TYPE(EnvironmentModification)
@@ -2385,6 +2384,7 @@ INSTANTIATE_SERIALISE_TYPE(FrameDescription)
 INSTANTIATE_SERIALISE_TYPE(FrameRecord)
 INSTANTIATE_SERIALISE_TYPE(MeshFormat)
 INSTANTIATE_SERIALISE_TYPE(FloatVector)
+INSTANTIATE_SERIALISE_TYPE(Offset);
 INSTANTIATE_SERIALISE_TYPE(Uuid)
 INSTANTIATE_SERIALISE_TYPE(CounterDescription)
 INSTANTIATE_SERIALISE_TYPE(PixelValue)

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -57,6 +57,26 @@ vec4 cubeFetch(samplerCube t, int i)
 }
 
 vec4 cubeFetch(samplerCubeArray t, int i)
+{
+  return textureLod(t, vec4(1,0,0,0), 0.0);
+}
+
+vec4 cubeFetch(usamplerCube t, int i)
+{
+  return textureLod(t, vec3(1,0,0), 0.0);
+}
+
+vec4 cubeFetch(usamplerCubeArray t, int i)
+{
+  return textureLod(t, vec4(1,0,0,0), 0.0);
+}
+
+vec4 cubeFetch(isamplerCube t, int i)
+{
+  return textureLod(t, vec3(1,0,0), 0.0);
+}
+
+vec4 cubeFetch(isamplerCubeArray t, int i)
 {
   return textureLod(t, vec4(1,0,0,0), 0.0);
 }

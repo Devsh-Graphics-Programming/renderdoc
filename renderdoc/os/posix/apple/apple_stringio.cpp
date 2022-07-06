@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -318,6 +318,10 @@ rdcwstr UTF82Wide(const rdcstr &s)
 }
 };
 
+// Helper method to avoid #include file conflicts between
+// <Carbon/Carbon.h> and "core/core.h"
+bool ShouldOutputDebugMon();
+
 namespace OSUtility
 {
 void WriteOutput(int channel, const char *str)
@@ -326,6 +330,8 @@ void WriteOutput(int channel, const char *str)
     fprintf(stdout, "%s", str);
   else if(channel == OSUtility::Output_StdErr)
     fprintf(stderr, "%s", str);
+  else if(channel == OSUtility::Output_DebugMon && ShouldOutputDebugMon())
+    fprintf(stdout, "%s", str);
 }
 
 uint64_t GetMachineIdent()

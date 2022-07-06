@@ -4,8 +4,11 @@ set(PROJECT demos)
 
 set(VULKAN_SRC
         3rdparty/volk/volk.c
+        vk/vk_headers.h
         vk/vk_helpers.cpp
+        vk/vk_helpers.h
         vk/vk_test.cpp
+        vk/vk_test.h
         vk/vk_adv_cbuffer_zoo.cpp
         vk/vk_buffer_truncation.cpp
         vk/vk_cbuffer_zoo.cpp
@@ -17,6 +20,7 @@ set(VULKAN_SRC
         vk/vk_discard_rects.cpp
         vk/vk_discard_zoo.cpp
         vk/vk_draw_zoo.cpp
+        vk/vk_dynamic_rendering.cpp
         vk/vk_empty_capture.cpp
         vk/vk_ext_buffer_address.cpp
         vk/vk_extended_dyn_state.cpp
@@ -33,10 +37,12 @@ set(VULKAN_SRC
         vk/vk_mesh_zoo.cpp
         vk/vk_misaligned_dirty.cpp
         vk/vk_multi_entry.cpp
+        vk/vk_multi_present.cpp
         vk/vk_multi_thread_windows.cpp
         vk/vk_overlay_test.cpp
         vk/vk_parameter_zoo.cpp
         vk/vk_pixel_history.cpp
+        vk/vk_postponed.cpp
         vk/vk_query_pool.cpp
         vk/vk_resource_lifetimes.cpp
         vk/vk_robustness2.cpp
@@ -62,6 +68,7 @@ set(VULKAN_SRC
 set(OPENGL_SRC
         3rdparty/glad/glad.c
         gl/gl_test.cpp
+        gl/gl_test.h
         gl/gl_buffer_resizing.cpp
         gl/gl_buffer_spam.cpp
         gl/gl_buffer_truncation.cpp
@@ -104,7 +111,9 @@ set(OPENGL_SRC
 
 set(SRC main.cpp
         3rdparty/fmt/format.cc
+        renderdoc_app.h
         test_common.cpp
+        test_common.h
         texture_zoo.cpp)
 
 project(demos)
@@ -122,7 +131,9 @@ if(NOT APPLE AND UNIX)
         gl/gl_test_linux.cpp)
     list(APPEND SRC 
         linux/linux_platform.cpp
-        linux/linux_window.cpp)
+        linux/linux_platform.h
+        linux/linux_window.cpp
+        linux/linux_window.h)
     add_executable(demos ${SRC} ${VULKAN_SRC} ${OPENGL_SRC})
 endif()
 

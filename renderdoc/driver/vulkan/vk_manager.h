@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -107,7 +107,6 @@ struct VkInitialContents
     FreeAlignedBuffer(inlineData);
 
     rm->ResourceTypeRelease(GetWrapped(buf));
-    rm->ResourceTypeRelease(GetWrapped(img));
 
     SAFE_DELETE(sparseTables);
     SAFE_DELETE(sparseBind);
@@ -127,7 +126,6 @@ struct VkInitialContents
   // for plain resources, we store the resource type and memory allocation details of the contents
   VkResourceType type;
   VkBuffer buf;
-  VkImage img;
   MemoryAllocation mem;
   Tag tag;
 
@@ -314,6 +312,12 @@ public:
     return wrapped->id;
   }
 
+  void PreFreeMemory(ResourceId id)
+  {
+    if(IsActiveCapturing(m_State))
+      ResourceManager::Prepare_InitialStateIfPostponed(id, true);
+  }
+
   template <typename realtype>
   void ReleaseWrappedResource(realtype obj, bool clearID = false)
   {
@@ -425,7 +429,6 @@ public:
   void FixupStorageBufferMemory(const std::unordered_set<VkResourceRecord *> &storageBuffers);
   void ClearReferencedMemory();
   MemRefs *FindMemRefs(ResourceId mem);
-  ImgRefs *FindImgRefs(ResourceId img);
 
   inline InitPolicy GetInitPolicy() { return m_InitPolicy; }
   void SetOptimisationLevel(ReplayOptimisationLevel level)
@@ -459,5 +462,6 @@ private:
   WrappedVulkan *m_Core;
   std::unordered_map<ResourceId, MemRefs> m_MemFrameRefs;
   std::set<ResourceId> m_DeviceMemories;
+  rdcarray<ResourceId> m_DeadDeviceMemories;
   InitPolicy m_InitPolicy = eInitPolicy_CopyAll;
 };

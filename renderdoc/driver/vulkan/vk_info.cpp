@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,11 @@
  ******************************************************************************/
 
 #include "vk_info.h"
+#include "core/settings.h"
+#include "lz4/lz4.h"
+
+// for compatibility we use the same DXBC name since it's now configured by the UI
+RDOC_EXTERN_CONFIG(rdcarray<rdcstr>, DXBC_Debug_SearchDirPaths);
 
 VkDynamicState ConvertDynamicState(VulkanDynamicStateIndex idx)
 {
@@ -128,6 +133,67 @@ VulkanDynamicStateIndex ConvertDynamicState(VkDynamicState state)
   return VkDynamicCount;
 }
 
+static VkGraphicsPipelineLibraryFlagsEXT DynamicStateValidState(VkDynamicState state)
+{
+  const VkGraphicsPipelineLibraryFlagsEXT vinput =
+      VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT;
+  const VkGraphicsPipelineLibraryFlagsEXT vert =
+      VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT;
+  const VkGraphicsPipelineLibraryFlagsEXT frag = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
+  const VkGraphicsPipelineLibraryFlagsEXT colout =
+      VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
+
+  switch(state)
+  {
+    case VK_DYNAMIC_STATE_VIEWPORT: return vert;
+    case VK_DYNAMIC_STATE_SCISSOR: return vert;
+    case VK_DYNAMIC_STATE_LINE_WIDTH: return frag;
+    case VK_DYNAMIC_STATE_DEPTH_BIAS: return frag;
+    case VK_DYNAMIC_STATE_BLEND_CONSTANTS: return colout;
+    case VK_DYNAMIC_STATE_DEPTH_BOUNDS: return frag;
+    case VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK: return frag;
+    case VK_DYNAMIC_STATE_STENCIL_WRITE_MASK: return frag;
+    case VK_DYNAMIC_STATE_STENCIL_REFERENCE: return frag;
+    case VK_DYNAMIC_STATE_VIEWPORT_W_SCALING_NV: return vert;
+    case VK_DYNAMIC_STATE_DISCARD_RECTANGLE_EXT: return vert;
+    case VK_DYNAMIC_STATE_SAMPLE_LOCATIONS_EXT: return frag | colout;
+    case VK_DYNAMIC_STATE_RAY_TRACING_PIPELINE_STACK_SIZE_KHR:
+      return (VkGraphicsPipelineLibraryFlagsEXT)0;
+    case VK_DYNAMIC_STATE_VIEWPORT_SHADING_RATE_PALETTE_NV: return vert;
+    case VK_DYNAMIC_STATE_VIEWPORT_COARSE_SAMPLE_ORDER_NV: return vert;
+    case VK_DYNAMIC_STATE_EXCLUSIVE_SCISSOR_NV: return vert;
+    case VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR: return vert | frag;
+    case VK_DYNAMIC_STATE_LINE_STIPPLE_EXT: return vert;
+    case VK_DYNAMIC_STATE_CULL_MODE: return vert;
+    case VK_DYNAMIC_STATE_FRONT_FACE: return vert;
+    case VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY: return vinput;
+    case VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT: return vert;
+    case VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT: return vert;
+    case VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE: return vinput;
+    case VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE: return frag;
+    case VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE: return frag;
+    case VK_DYNAMIC_STATE_DEPTH_COMPARE_OP: return frag;
+    case VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE: return frag;
+    case VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE: return frag;
+    case VK_DYNAMIC_STATE_STENCIL_OP: return frag;
+    case VK_DYNAMIC_STATE_VERTEX_INPUT_EXT: return vinput;
+    case VK_DYNAMIC_STATE_PATCH_CONTROL_POINTS_EXT: return vert;
+    case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE: return vert;
+    case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE: return frag;
+    case VK_DYNAMIC_STATE_LOGIC_OP_EXT: return colout;
+    case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE: return vinput;
+    case VK_DYNAMIC_STATE_COLOR_WRITE_ENABLE_EXT: return colout;
+    case VK_DYNAMIC_STATE_MAX_ENUM: break;
+  }
+
+  RDCERR("Unexpected vulkan state %u", state);
+
+  return VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT |
+         VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT |
+         VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT |
+         VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
+}
+
 void DescSetLayout::Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
                          const VkDescriptorSetLayoutCreateInfo *pCreateInfo)
 {
@@ -136,6 +202,8 @@ void DescSetLayout::Init(VulkanResourceManager *resourceMan, VulkanCreationInfo 
   inlineByteSize = 0;
 
   flags = pCreateInfo->flags;
+
+  anyStageFlags = 0;
 
   VkDescriptorSetLayoutBindingFlagsCreateInfo *bindingFlags =
       (VkDescriptorSetLayoutBindingFlagsCreateInfo *)FindNextStruct(
@@ -159,6 +227,8 @@ void DescSetLayout::Init(VulkanResourceManager *resourceMan, VulkanCreationInfo 
     bindings[b].descriptorCount = pCreateInfo->pBindings[i].descriptorCount;
     bindings[b].descriptorType = pCreateInfo->pBindings[i].descriptorType;
     bindings[b].stageFlags = pCreateInfo->pBindings[i].stageFlags;
+
+    anyStageFlags |= bindings[b].stageFlags;
 
     if(bindings[b].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC ||
        bindings[b].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC)
@@ -356,7 +426,21 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
 
   graphicsPipe = true;
 
-  layout = GetResID(pCreateInfo->layout);
+  // this is used to e.g. filter specified dynamic states so we only consider the ones valid for
+  // this pipeline. If we're not using libraries, all states are valid
+  VkGraphicsPipelineLibraryFlagsEXT availStages =
+      VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT |
+      VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT |
+      VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT |
+      VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
+
+  const VkGraphicsPipelineLibraryCreateInfoEXT *graphicsLibraryCreate =
+      (const VkGraphicsPipelineLibraryCreateInfoEXT *)FindNextStruct(
+          pCreateInfo, VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT);
+  if(graphicsLibraryCreate)
+    availStages = libraryFlags = graphicsLibraryCreate->flags;
+
+  vertLayout = fragLayout = GetResID(pCreateInfo->layout);
   renderpass = GetResID(pCreateInfo->renderPass);
   subpass = pCreateInfo->subpass;
 
@@ -383,7 +467,16 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
   if(pCreateInfo->pDynamicState)
   {
     for(uint32_t i = 0; i < pCreateInfo->pDynamicState->dynamicStateCount; i++)
-      dynamicStates[ConvertDynamicState(pCreateInfo->pDynamicState->pDynamicStates[i])] = true;
+    {
+      VkDynamicState d = pCreateInfo->pDynamicState->pDynamicStates[i];
+
+      // ignore dynamic states not available for this library (e.g.
+      // VK_DYNAMIC_STATE_VERTEX_INPUT_EXT in a library with only FRAGMENT_OUTPUT_INTERFACE_BIT_EXT)
+      if((DynamicStateValidState(d) & availStages) == 0)
+        continue;
+
+      dynamicStates[ConvertDynamicState(d)] = true;
+    }
 
     // if the viewports and counts are dynamic this supersets the viewport only being dynamic. For
     // ease of code elsewhere, turn off the older one if both are specified so that we don't call
@@ -481,8 +574,16 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
     }
   }
 
-  topology = pCreateInfo->pInputAssemblyState->topology;
-  primitiveRestartEnable = pCreateInfo->pInputAssemblyState->primitiveRestartEnable ? true : false;
+  if(pCreateInfo->pInputAssemblyState)
+  {
+    topology = pCreateInfo->pInputAssemblyState->topology;
+    primitiveRestartEnable = pCreateInfo->pInputAssemblyState->primitiveRestartEnable ? true : false;
+  }
+  else
+  {
+    topology = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+    primitiveRestartEnable = false;
+  }
 
   if(pCreateInfo->pTessellationState)
     patchControlPoints = pCreateInfo->pTessellationState->patchControlPoints;
@@ -515,6 +616,19 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
       scissors[i] = pCreateInfo->pViewportState->pScissors[i];
   }
 
+  // VkPipelineFragmentShadingRateStateCreateInfoKHR
+  shadingRate = {1, 1};
+  shadingRateCombiners[0] = shadingRateCombiners[1] = VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR;
+  const VkPipelineFragmentShadingRateStateCreateInfoKHR *shadingRateInfo =
+      (const VkPipelineFragmentShadingRateStateCreateInfoKHR *)FindNextStruct(
+          pCreateInfo, VK_STRUCTURE_TYPE_PIPELINE_FRAGMENT_SHADING_RATE_STATE_CREATE_INFO_KHR);
+  if(shadingRateInfo)
+  {
+    shadingRate = shadingRateInfo->fragmentSize;
+    shadingRateCombiners[0] = shadingRateInfo->combinerOps[0];
+    shadingRateCombiners[1] = shadingRateInfo->combinerOps[1];
+  }
+
   // VkPipelineDiscardRectangleStateCreateInfoEXT
   discardMode = VK_DISCARD_RECTANGLE_MODE_EXCLUSIVE_EXT;
 
@@ -535,16 +649,33 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
   }
 
   // VkPipelineRasterStateCreateInfo
-  depthClampEnable = pCreateInfo->pRasterizationState->depthClampEnable ? true : false;
-  rasterizerDiscardEnable = pCreateInfo->pRasterizationState->rasterizerDiscardEnable ? true : false;
-  polygonMode = pCreateInfo->pRasterizationState->polygonMode;
-  cullMode = pCreateInfo->pRasterizationState->cullMode;
-  frontFace = pCreateInfo->pRasterizationState->frontFace;
-  depthBiasEnable = pCreateInfo->pRasterizationState->depthBiasEnable ? true : false;
-  depthBiasConstantFactor = pCreateInfo->pRasterizationState->depthBiasConstantFactor;
-  depthBiasClamp = pCreateInfo->pRasterizationState->depthBiasClamp;
-  depthBiasSlopeFactor = pCreateInfo->pRasterizationState->depthBiasSlopeFactor;
-  lineWidth = pCreateInfo->pRasterizationState->lineWidth;
+  if(pCreateInfo->pRasterizationState)
+  {
+    depthClampEnable = pCreateInfo->pRasterizationState->depthClampEnable ? true : false;
+    rasterizerDiscardEnable =
+        pCreateInfo->pRasterizationState->rasterizerDiscardEnable ? true : false;
+    polygonMode = pCreateInfo->pRasterizationState->polygonMode;
+    cullMode = pCreateInfo->pRasterizationState->cullMode;
+    frontFace = pCreateInfo->pRasterizationState->frontFace;
+    depthBiasEnable = pCreateInfo->pRasterizationState->depthBiasEnable ? true : false;
+    depthBiasConstantFactor = pCreateInfo->pRasterizationState->depthBiasConstantFactor;
+    depthBiasClamp = pCreateInfo->pRasterizationState->depthBiasClamp;
+    depthBiasSlopeFactor = pCreateInfo->pRasterizationState->depthBiasSlopeFactor;
+    lineWidth = pCreateInfo->pRasterizationState->lineWidth;
+  }
+  else
+  {
+    depthClampEnable = false;
+    rasterizerDiscardEnable = false;
+    polygonMode = VK_POLYGON_MODE_FILL;
+    cullMode = VK_CULL_MODE_NONE;
+    frontFace = VK_FRONT_FACE_CLOCKWISE;
+    depthBiasEnable = false;
+    depthBiasConstantFactor = 0.0f;
+    depthBiasClamp = 0.0f;
+    depthBiasSlopeFactor = 0.0f;
+    lineWidth = 1.0f;
+  }
 
   // VkPipelineRasterizationStateStreamCreateInfoEXT
   rasterizationStream = 0;
@@ -734,6 +865,188 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
         attachments[i].channelWriteMask = 0;
     }
   }
+
+  const VkPipelineLibraryCreateInfoKHR *libraryReference =
+      (const VkPipelineLibraryCreateInfoKHR *)FindNextStruct(
+          pCreateInfo, VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR);
+  if(libraryReference)
+  {
+    // unconditionally pull in state from libraries - the state must not overlap (or must be
+    // identical where overlap is inevitable)
+    for(uint32_t l = 0; l < libraryReference->libraryCount; l++)
+    {
+      ResourceId pipeid = GetResID(libraryReference->pLibraries[l]);
+
+      parentLibraries.push_back(pipeid);
+
+      const Pipeline &pipeInfo = info.m_Pipeline[pipeid];
+
+      for(size_t i = 0; i < VkDynamicCount; i++)
+        dynamicStates[i] |= pipeInfo.dynamicStates[i];
+
+      if(pipeInfo.libraryFlags & VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT)
+      {
+        vertexBindings = pipeInfo.vertexBindings;
+        vertexAttrs = pipeInfo.vertexAttrs;
+
+        topology = pipeInfo.topology;
+        primitiveRestartEnable = pipeInfo.primitiveRestartEnable;
+      }
+
+      if(pipeInfo.libraryFlags & VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT)
+      {
+        renderpass = pipeInfo.renderpass;
+        subpass = pipeInfo.subpass;
+
+        for(uint32_t i = 0; i < 5; i++)
+          shaders[i] = pipeInfo.shaders[i];
+
+        vertLayout = pipeInfo.vertLayout;
+
+        viewportCount = pipeInfo.viewportCount;
+        viewports = pipeInfo.viewports;
+        scissors = pipeInfo.scissors;
+
+        depthClampEnable = pipeInfo.depthClampEnable;
+        rasterizerDiscardEnable = pipeInfo.rasterizerDiscardEnable;
+        polygonMode = pipeInfo.polygonMode;
+        cullMode = pipeInfo.cullMode;
+        frontFace = pipeInfo.frontFace;
+        depthBiasEnable = pipeInfo.depthBiasEnable;
+        depthBiasConstantFactor = pipeInfo.depthBiasConstantFactor;
+        depthBiasClamp = pipeInfo.depthBiasClamp;
+        depthBiasSlopeFactor = pipeInfo.depthBiasSlopeFactor;
+        lineWidth = pipeInfo.lineWidth;
+
+        rasterizationStream = pipeInfo.rasterizationStream;
+        depthClipEnable = pipeInfo.depthClipEnable;
+        patchControlPoints = pipeInfo.patchControlPoints;
+        tessellationDomainOrigin = pipeInfo.tessellationDomainOrigin;
+
+        conservativeRasterizationMode = pipeInfo.conservativeRasterizationMode;
+        extraPrimitiveOverestimationSize = pipeInfo.extraPrimitiveOverestimationSize;
+
+        lineRasterMode = pipeInfo.lineRasterMode;
+        stippleEnabled = pipeInfo.stippleEnabled;
+        stippleFactor = pipeInfo.stippleFactor;
+        stipplePattern = pipeInfo.stipplePattern;
+
+        discardRectangles = pipeInfo.discardRectangles;
+        discardMode = pipeInfo.discardMode;
+      }
+
+      if(pipeInfo.libraryFlags & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT)
+      {
+        renderpass = pipeInfo.renderpass;
+        subpass = pipeInfo.subpass;
+
+        shaders[4] = pipeInfo.shaders[4];
+
+        fragLayout = pipeInfo.fragLayout;
+
+        rasterizationSamples = pipeInfo.rasterizationSamples;
+        sampleShadingEnable = pipeInfo.sampleShadingEnable;
+        minSampleShading = pipeInfo.minSampleShading;
+        sampleMask = pipeInfo.sampleMask;
+        alphaToCoverageEnable = pipeInfo.alphaToCoverageEnable;
+        alphaToOneEnable = pipeInfo.alphaToOneEnable;
+
+        sampleLocations = pipeInfo.sampleLocations;
+
+        depthTestEnable = pipeInfo.depthTestEnable;
+        depthWriteEnable = pipeInfo.depthWriteEnable;
+        depthCompareOp = pipeInfo.depthCompareOp;
+        depthBoundsEnable = pipeInfo.depthBoundsEnable;
+        stencilTestEnable = pipeInfo.stencilTestEnable;
+        front = pipeInfo.front;
+        back = pipeInfo.back;
+        minDepthBounds = pipeInfo.minDepthBounds;
+        maxDepthBounds = pipeInfo.maxDepthBounds;
+      }
+
+      if(pipeInfo.libraryFlags & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT)
+      {
+        renderpass = pipeInfo.renderpass;
+        subpass = pipeInfo.subpass;
+
+        rasterizationSamples = pipeInfo.rasterizationSamples;
+        sampleShadingEnable = pipeInfo.sampleShadingEnable;
+        minSampleShading = pipeInfo.minSampleShading;
+        sampleMask = pipeInfo.sampleMask;
+        alphaToCoverageEnable = pipeInfo.alphaToCoverageEnable;
+        alphaToOneEnable = pipeInfo.alphaToOneEnable;
+
+        logicOpEnable = pipeInfo.logicOpEnable;
+        logicOp = pipeInfo.logicOp;
+        memcpy(blendConst, pipeInfo.blendConst, sizeof(blendConst));
+
+        attachments = pipeInfo.attachments;
+
+        viewMask = pipeInfo.viewMask;
+        colorFormats = pipeInfo.colorFormats;
+        depthFormat = pipeInfo.depthFormat;
+        stencilFormat = pipeInfo.stencilFormat;
+      }
+    }
+  }
+
+  // calculate descSetLayouts. If only one layout is set, just copy the layouts from it
+  if(vertLayout == ResourceId())
+  {
+    descSetLayouts = info.m_PipelineLayout[fragLayout].descSetLayouts;
+  }
+  else if(fragLayout == ResourceId())
+  {
+    descSetLayouts = info.m_PipelineLayout[vertLayout].descSetLayouts;
+  }
+  // if they're both the same (both must be non-empty or we would have hit a case above) it doesn't
+  // matter
+  else if(vertLayout == fragLayout)
+  {
+    descSetLayouts = info.m_PipelineLayout[vertLayout].descSetLayouts;
+  }
+  else
+  {
+    // in this case vertLayout is not the same as fragLayout, so we have independent sets and this
+    // is the linked pipeline
+    // fortunately one of the requirements of independent set is that any descriptor sets which
+    // contain any fragment visible descriptors are present in the fragment layout, and vice-versa
+    // for non-fragment. Any sets which contain both must be identical in both.
+    // That means we can start by picking all the set layouts from the fragment pipeline layout that
+    // reference fragments (ignoring any others that may be empty or not but are ignored), then for
+    // all other sets unconditionally pick the one from the vertex layout
+
+    const rdcarray<ResourceId> &vSets = info.m_PipelineLayout[vertLayout].descSetLayouts;
+    const rdcarray<ResourceId> &fSets = info.m_PipelineLayout[fragLayout].descSetLayouts;
+
+    descSetLayouts.resize(RDCMAX(vSets.size(), fSets.size()));
+
+    for(size_t i = 0; i < fSets.size(); i++)
+    {
+      if((info.m_DescSetLayout[fSets[i]].anyStageFlags & VK_SHADER_STAGE_FRAGMENT_BIT) != 0)
+        descSetLayouts[i] = fSets[i];
+    }
+
+    for(size_t i = 0; i < vSets.size(); i++)
+    {
+      if(descSetLayouts[i] == ResourceId())
+        descSetLayouts[i] = vSets[i];
+    }
+
+    // it's possible we have sets which are unused by both - maybe empty, dummy, or they only appear
+    // in the layout which ignores them. Pick from whichever layout contained that element as it
+    // doesn't matter.
+    for(size_t i = 0; i < descSetLayouts.size(); i++)
+    {
+      if(descSetLayouts[i] == ResourceId())
+      {
+        if(i < vSets.size())
+          descSetLayouts[i] = vSets[i];
+        else
+          descSetLayouts[i] = fSets[i];
+      }
+    }
+  }
 }
 
 void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
@@ -743,7 +1056,9 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan, Vulk
 
   graphicsPipe = false;
 
-  layout = GetResID(pCreateInfo->layout);
+  compLayout = GetResID(pCreateInfo->layout);
+
+  descSetLayouts = info.m_PipelineLayout[compLayout].descSetLayouts;
 
   // need to figure out which states are valid to be NULL
 
@@ -829,6 +1144,8 @@ void VulkanCreationInfo::PipelineLayout::Init(VulkanResourceManager *resourceMan
                                               VulkanCreationInfo &info,
                                               const VkPipelineLayoutCreateInfo *pCreateInfo)
 {
+  flags = pCreateInfo->flags;
+
   if(pCreateInfo->pSetLayouts)
   {
     descSetLayouts.resize(pCreateInfo->setLayoutCount);
@@ -919,6 +1236,8 @@ void VulkanCreationInfo::RenderPass::Init(VulkanResourceManager *resourceMan,
     if(dst.depthstencilAttachment >= 0)
       attachments[dst.depthstencilAttachment].used = true;
 
+    dst.depthstencilResolveAttachment = -1;
+
     dst.fragmentDensityAttachment =
         (fragmentDensity &&
                  fragmentDensity->fragmentDensityMapAttachment.attachment != VK_ATTACHMENT_UNUSED
@@ -930,6 +1249,10 @@ void VulkanCreationInfo::RenderPass::Init(VulkanResourceManager *resourceMan,
                  fragmentDensity->fragmentDensityMapAttachment.attachment != VK_ATTACHMENT_UNUSED
              ? fragmentDensity->fragmentDensityMapAttachment.layout
              : VK_IMAGE_LAYOUT_UNDEFINED);
+
+    dst.shadingRateAttachment = -1;
+    dst.shadingRateLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    dst.shadingRateTexelSize = VkExtent2D({1, 1});
 
     if(multiview && multiview->subpassCount > 0)
     {
@@ -1037,6 +1360,18 @@ void VulkanCreationInfo::RenderPass::Init(VulkanResourceManager *resourceMan,
     if(separateStencil)
       dst.stencilLayout = separateStencil->stencilLayout;
 
+    // VK_KHR_depth_stencil_resolve
+    const VkSubpassDescriptionDepthStencilResolve *depthstencilResolve =
+        (const VkSubpassDescriptionDepthStencilResolve *)FindNextStruct(
+            &src, VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE);
+
+    dst.depthstencilResolveAttachment =
+        (depthstencilResolve &&
+                 depthstencilResolve->pDepthStencilResolveAttachment->attachment != VK_ATTACHMENT_UNUSED
+             ? depthstencilResolve->pDepthStencilResolveAttachment->attachment
+             : -1);
+
+    // VK_EXT_fragment_density_map
     dst.fragmentDensityAttachment =
         (fragmentDensity &&
                  fragmentDensity->fragmentDensityMapAttachment.attachment != VK_ATTACHMENT_UNUSED
@@ -1048,6 +1383,25 @@ void VulkanCreationInfo::RenderPass::Init(VulkanResourceManager *resourceMan,
                  fragmentDensity->fragmentDensityMapAttachment.attachment != VK_ATTACHMENT_UNUSED
              ? fragmentDensity->fragmentDensityMapAttachment.layout
              : VK_IMAGE_LAYOUT_UNDEFINED);
+
+    // VK_KHR_fragment_shading_rate
+    const VkFragmentShadingRateAttachmentInfoKHR *shadingRate =
+        (const VkFragmentShadingRateAttachmentInfoKHR *)FindNextStruct(
+            &src, VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR);
+    dst.shadingRateAttachment =
+        (shadingRate && shadingRate->pFragmentShadingRateAttachment &&
+                 shadingRate->pFragmentShadingRateAttachment->attachment != VK_ATTACHMENT_UNUSED
+             ? shadingRate->pFragmentShadingRateAttachment->attachment
+             : -1);
+
+    dst.shadingRateLayout =
+        (shadingRate && shadingRate->pFragmentShadingRateAttachment &&
+                 shadingRate->pFragmentShadingRateAttachment->attachment != VK_ATTACHMENT_UNUSED
+             ? shadingRate->pFragmentShadingRateAttachment->layout
+             : VK_IMAGE_LAYOUT_UNDEFINED);
+
+    dst.shadingRateTexelSize =
+        shadingRate ? shadingRate->shadingRateAttachmentTexelSize : VkExtent2D({1, 1});
 
     for(uint32_t i = 0; i < 32; i++)
     {
@@ -1328,6 +1682,127 @@ void VulkanCreationInfo::ShaderModule::Init(VulkanResourceManager *resourceMan,
     spirv.Parse(rdcarray<uint32_t>((uint32_t *)(pCreateInfo->pCode),
                                    pCreateInfo->codeSize / sizeof(uint32_t)));
   }
+}
+
+void VulkanCreationInfo::ShaderModule::Reinit()
+{
+  bool lz4 = false;
+
+  rdcstr originalPath = unstrippedPath;
+
+  if(!strncmp(originalPath.c_str(), "lz4#", 4))
+  {
+    originalPath = originalPath.substr(4);
+    lz4 = true;
+  }
+  // could support more if we're willing to compile in the decompressor
+
+  FILE *originalShaderFile = NULL;
+
+  const rdcarray<rdcstr> &searchPaths = DXBC_Debug_SearchDirPaths();
+
+  size_t numSearchPaths = searchPaths.size();
+
+  rdcstr foundPath;
+
+  // keep searching until we've exhausted all possible path options, or we've found a file that
+  // opens
+  while(originalShaderFile == NULL && !originalPath.empty())
+  {
+    // while we haven't found a file, keep trying through the search paths. For i==0
+    // check the path on its own, in case it's an absolute path.
+    for(size_t i = 0; originalShaderFile == NULL && i <= numSearchPaths; i++)
+    {
+      if(i == 0)
+      {
+        originalShaderFile = FileIO::fopen(originalPath, FileIO::ReadBinary);
+        foundPath = originalPath;
+        continue;
+      }
+      else
+      {
+        const rdcstr &searchPath = searchPaths[i - 1];
+        foundPath = searchPath + "/" + originalPath;
+        originalShaderFile = FileIO::fopen(foundPath, FileIO::ReadBinary);
+      }
+    }
+
+    if(originalShaderFile == NULL)
+    {
+      // follow D3D's search behaviour for consistency: when presented with a
+      // relative path containing subfolders like foo/bar/blah.pdb then we should first try to
+      // append it to all search paths as-is, then strip off the top-level subdirectory to get
+      // bar/blah.pdb and try that in all search directories, and keep going. So if we got here
+      // and didn't open a file, try to strip off the the top directory and continue.
+      int32_t offs = originalPath.find_first_of("\\/");
+
+      // if we couldn't find a directory separator there's nothing to do, stop looking
+      if(offs == -1)
+        break;
+
+      // otherwise strip up to there and keep going
+      originalPath.erase(0, offs + 1);
+    }
+  }
+
+  if(originalShaderFile == NULL)
+    return;
+
+  FileIO::fseek64(originalShaderFile, 0L, SEEK_END);
+  uint64_t originalShaderSize = FileIO::ftell64(originalShaderFile);
+  FileIO::fseek64(originalShaderFile, 0, SEEK_SET);
+
+  {
+    bytebuf debugBytecode;
+
+    debugBytecode.resize((size_t)originalShaderSize);
+    FileIO::fread(&debugBytecode[0], sizeof(byte), (size_t)originalShaderSize, originalShaderFile);
+
+    if(lz4)
+    {
+      rdcarray<byte> decompressed;
+
+      // first try decompressing to 1MB flat
+      decompressed.resize(100 * 1024);
+
+      int ret = LZ4_decompress_safe((const char *)&debugBytecode[0], (char *)&decompressed[0],
+                                    (int)debugBytecode.size(), (int)decompressed.size());
+
+      if(ret < 0)
+      {
+        // if it failed, either source is corrupt or we didn't allocate enough space.
+        // Just allocate 255x compressed size since it can't need any more than that.
+        decompressed.resize(255 * debugBytecode.size());
+
+        ret = LZ4_decompress_safe((const char *)&debugBytecode[0], (char *)&decompressed[0],
+                                  (int)debugBytecode.size(), (int)decompressed.size());
+
+        if(ret < 0)
+        {
+          RDCERR("Failed to decompress LZ4 data from %s", foundPath.c_str());
+          return;
+        }
+      }
+
+      RDCASSERT(ret > 0, ret);
+
+      // we resize and memcpy instead of just doing .swap() because that would
+      // transfer over the over-large pessimistic capacity needed for decompression
+      debugBytecode.resize(ret);
+      memcpy(&debugBytecode[0], &decompressed[0], debugBytecode.size());
+    }
+
+    rdcspv::Reflector reflTest;
+    reflTest.Parse(rdcarray<uint32_t>((uint32_t *)(debugBytecode.data()),
+                                      debugBytecode.size() / sizeof(uint32_t)));
+
+    if(!reflTest.GetSPIRV().empty())
+    {
+      spirv = reflTest;
+    }
+  }
+
+  FileIO::fclose(originalShaderFile);
 }
 
 void VulkanCreationInfo::ShaderModuleReflection::Init(VulkanResourceManager *resourceMan,

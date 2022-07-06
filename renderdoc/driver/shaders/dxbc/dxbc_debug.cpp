@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1746,7 +1746,7 @@ void FlattenSingleVariable(const rdcstr &cbufferName, uint32_t byteOffset, const
   size_t outIdx = byteOffset / 16;
   size_t outComp = (byteOffset % 16) / 4;
 
-  if(v.rowMajor)
+  if(v.RowMajor())
     outvars.resize(RDCMAX(outIdx + v.rows, outvars.size()));
   else
     outvars.resize(RDCMAX(outIdx + v.columns, outvars.size()));
@@ -1777,17 +1777,16 @@ void FlattenSingleVariable(const rdcstr &cbufferName, uint32_t byteOffset, const
   }
   else
   {
-    const uint32_t numRegisters = v.rowMajor ? v.rows : v.columns;
+    const uint32_t numRegisters = v.RowMajor() ? v.rows : v.columns;
     for(uint32_t reg = 0; reg < numRegisters; reg++)
     {
       outvars[outIdx + reg].rows = 1;
       outvars[outIdx + reg].type = VarType::Unknown;
-      outvars[outIdx + reg].isStruct = false;
       outvars[outIdx + reg].columns = v.columns;
-      outvars[outIdx + reg].rowMajor = v.rowMajor;
+      outvars[outIdx + reg].flags = v.flags;
     }
 
-    if(v.rowMajor)
+    if(v.RowMajor())
     {
       for(size_t ri = 0; ri < v.rows; ri++)
         memcpy(&outvars[outIdx + ri].value.u32v[0], &v.value.u32v[ri * v.columns],
@@ -1817,8 +1816,8 @@ void FlattenSingleVariable(const rdcstr &cbufferName, uint32_t byteOffset, const
     {
       for(uint8_t c = 0; c < v.columns; c++)
       {
-        size_t regIndex = outIdx + (v.rowMajor ? r : c);
-        size_t compIndex = outComp + (v.rowMajor ? c : r);
+        size_t regIndex = outIdx + (v.RowMajor() ? r : c);
+        size_t compIndex = outComp + (v.RowMajor() ? c : r);
 
         mapping.variables[i].type = DebugVariableType::Constant;
         mapping.variables[i].name = StringFormat::Fmt("%s[%zu]", cbufferName.c_str(), regIndex);
@@ -1847,43 +1846,37 @@ void FlattenVariables(const rdcstr &cbufferName, const rdcarray<ShaderConstant> 
 
     rdcstr basename = prefix + rdcstr(v.name);
 
-    if((v.rows == 0 && v.columns == 0) || !v.members.empty())
+    if(v.type == VarType::Struct)
     {
-      if(v.isStruct)
+      // check if this is an array of structs or not
+      if(c.type.elements == 1)
       {
         FlattenVariables(cbufferName, c.type.members, v.members, outvars, basename + ".",
                          byteOffset, sourceVars);
       }
       else
       {
-        if(c.type.members.empty())
+        for(int m = 0; m < v.members.count(); m++)
         {
-          // if there are no members in this type, it means it's a basic array - unroll directly
-
-          for(int m = 0; m < v.members.count(); m++)
-          {
-            FlattenSingleVariable(cbufferName, byteOffset + m * c.type.descriptor.arrayByteStride,
-                                  StringFormat::Fmt("%s[%zu]", basename.c_str(), m), v.members[m],
-                                  outvars, sourceVars);
-          }
-        }
-        else
-        {
-          // otherwise we recurse into each member and flatten
-
-          for(int m = 0; m < v.members.count(); m++)
-          {
-            FlattenVariables(cbufferName, c.type.members, v.members[m].members, outvars,
-                             StringFormat::Fmt("%s[%zu].", basename.c_str(), m),
-                             byteOffset + m * c.type.descriptor.arrayByteStride, sourceVars);
-          }
+          FlattenVariables(cbufferName, c.type.members, v.members[m].members, outvars,
+                           StringFormat::Fmt("%s[%zu].", basename.c_str(), m),
+                           byteOffset + m * c.type.arrayByteStride, sourceVars);
         }
       }
-
-      continue;
     }
-
-    FlattenSingleVariable(cbufferName, byteOffset, basename, v, outvars, sourceVars);
+    else if(c.type.elements > 1 || (v.rows == 0 && v.columns == 0) || !v.members.empty())
+    {
+      for(int m = 0; m < v.members.count(); m++)
+      {
+        FlattenSingleVariable(cbufferName, byteOffset + m * c.type.arrayByteStride,
+                              StringFormat::Fmt("%s[%zu]", basename.c_str(), m), v.members[m],
+                              outvars, sourceVars);
+      }
+    }
+    else
+    {
+      FlattenSingleVariable(cbufferName, byteOffset, basename, v, outvars, sourceVars);
+    }
   }
 }
 
@@ -2777,31 +2770,31 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
 
     case OPCODE_EQ:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.f32v[0] == srcOpers[1].value.f32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[1] == srcOpers[1].value.f32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[2] == srcOpers[1].value.f32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[3] == srcOpers[1].value.f32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.f32v[0] == srcOpers[1].value.f32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[1] == srcOpers[1].value.f32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[2] == srcOpers[1].value.f32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[3] == srcOpers[1].value.f32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_NE:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.f32v[0] != srcOpers[1].value.f32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[1] != srcOpers[1].value.f32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[2] != srcOpers[1].value.f32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[3] != srcOpers[1].value.f32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.f32v[0] != srcOpers[1].value.f32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[1] != srcOpers[1].value.f32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[2] != srcOpers[1].value.f32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[3] != srcOpers[1].value.f32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_LT:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.f32v[0] < srcOpers[1].value.f32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[1] < srcOpers[1].value.f32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[2] < srcOpers[1].value.f32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[3] < srcOpers[1].value.f32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.f32v[0] < srcOpers[1].value.f32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[1] < srcOpers[1].value.f32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[2] < srcOpers[1].value.f32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[3] < srcOpers[1].value.f32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_GE:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.f32v[0] >= srcOpers[1].value.f32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[1] >= srcOpers[1].value.f32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[2] >= srcOpers[1].value.f32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.f32v[3] >= srcOpers[1].value.f32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.f32v[0] >= srcOpers[1].value.f32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[1] >= srcOpers[1].value.f32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[2] >= srcOpers[1].value.f32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.f32v[3] >= srcOpers[1].value.f32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_DEQ:
     case OPCODE_DNE:
@@ -2858,45 +2851,45 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
     }
     case OPCODE_IEQ:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.s32v[0] == srcOpers[1].value.s32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[1] == srcOpers[1].value.s32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[2] == srcOpers[1].value.s32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[3] == srcOpers[1].value.s32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.s32v[0] == srcOpers[1].value.s32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[1] == srcOpers[1].value.s32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[2] == srcOpers[1].value.s32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[3] == srcOpers[1].value.s32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_INE:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.s32v[0] != srcOpers[1].value.s32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[1] != srcOpers[1].value.s32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[2] != srcOpers[1].value.s32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[3] != srcOpers[1].value.s32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.s32v[0] != srcOpers[1].value.s32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[1] != srcOpers[1].value.s32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[2] != srcOpers[1].value.s32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[3] != srcOpers[1].value.s32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_IGE:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.s32v[0] >= srcOpers[1].value.s32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[1] >= srcOpers[1].value.s32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[2] >= srcOpers[1].value.s32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[3] >= srcOpers[1].value.s32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.s32v[0] >= srcOpers[1].value.s32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[1] >= srcOpers[1].value.s32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[2] >= srcOpers[1].value.s32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[3] >= srcOpers[1].value.s32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_ILT:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.s32v[0] < srcOpers[1].value.s32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[1] < srcOpers[1].value.s32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[2] < srcOpers[1].value.s32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.s32v[3] < srcOpers[1].value.s32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.s32v[0] < srcOpers[1].value.s32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[1] < srcOpers[1].value.s32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[2] < srcOpers[1].value.s32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.s32v[3] < srcOpers[1].value.s32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_ULT:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.u32v[0] < srcOpers[1].value.u32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.u32v[1] < srcOpers[1].value.u32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.u32v[2] < srcOpers[1].value.u32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.u32v[3] < srcOpers[1].value.u32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.u32v[0] < srcOpers[1].value.u32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.u32v[1] < srcOpers[1].value.u32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.u32v[2] < srcOpers[1].value.u32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.u32v[3] < srcOpers[1].value.u32v[3] ? ~0u : 0u)));
       break;
     case OPCODE_UGE:
       SetDst(state, op.operands[0], op,
-             ShaderVariable("", (srcOpers[0].value.u32v[0] >= srcOpers[1].value.u32v[0] ? ~0l : 0l),
-                            (srcOpers[0].value.u32v[1] >= srcOpers[1].value.u32v[1] ? ~0l : 0l),
-                            (srcOpers[0].value.u32v[2] >= srcOpers[1].value.u32v[2] ? ~0l : 0l),
-                            (srcOpers[0].value.u32v[3] >= srcOpers[1].value.u32v[3] ? ~0l : 0l)));
+             ShaderVariable("", (srcOpers[0].value.u32v[0] >= srcOpers[1].value.u32v[0] ? ~0u : 0u),
+                            (srcOpers[0].value.u32v[1] >= srcOpers[1].value.u32v[1] ? ~0u : 0u),
+                            (srcOpers[0].value.u32v[2] >= srcOpers[1].value.u32v[2] ? ~0u : 0u),
+                            (srcOpers[0].value.u32v[3] >= srcOpers[1].value.u32v[3] ? ~0u : 0u)));
       break;
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////

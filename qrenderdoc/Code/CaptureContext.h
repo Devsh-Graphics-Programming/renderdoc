@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2022 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -76,7 +76,7 @@ public:
 
   rdcarray<ExtensionMetadata> GetInstalledExtensions() override;
   bool IsExtensionLoaded(rdcstr name) override;
-  bool LoadExtension(rdcstr name) override;
+  rdcstr LoadExtension(rdcstr name) override;
 
   void RegisterWindowMenu(WindowMenu base, const rdcarray<rdcstr> &submenus,
                           ExtensionCallback callback) override;
@@ -149,12 +149,13 @@ public:
   bool IsCaptureLocal() override { return m_CaptureLocal; }
   bool IsCaptureTemporary() override { return m_CaptureTemporary; }
   bool IsCaptureLoading() override { return m_LoadInProgress; }
-  ReplayStatus GetFatalError() override { return m_Replay.GetFatalError(); }
+  ResultDetails GetFatalError() override { return m_Replay.GetFatalError(); }
   rdcstr GetCaptureFilename() override { return m_CaptureFile; }
   CaptureModifications GetCaptureModifications() override { return m_CaptureMods; }
   const FrameDescription &FrameInfo() override { return m_FrameInfo; }
   const APIProperties &APIProps() override { return m_APIProps; }
   rdcarray<ShaderEncoding> CustomShaderEncodings() override { return m_CustomEncodings; }
+  rdcarray<ShaderSourcePrefix> CustomShaderSourcePrefixes() override { return m_CustomPrefixes; }
   rdcarray<ShaderEncoding> TargetShaderEncodings() override { return m_TargetEncodings; }
   uint32_t CurSelectedEvent() override { return m_SelectedEventID; }
   uint32_t CurEvent() override { return m_EventID; }
@@ -266,8 +267,7 @@ public:
   IBufferViewer *ViewTextureAsBuffer(ResourceId id, const Subresource &sub,
                                      const rdcstr &format = "") override;
 
-  IConstantBufferPreviewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot,
-                                               uint32_t idx) override;
+  IBufferViewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot, uint32_t idx) override;
   IPixelHistoryView *ViewPixelHistory(ResourceId texID, uint32_t x, uint32_t y,
                                       const TextureDisplay &display) override;
 
@@ -362,6 +362,7 @@ private:
   rdcarray<ActionDescription> m_EmptyActions;
 
   rdcarray<ShaderEncoding> m_CustomEncodings, m_TargetEncodings;
+  rdcarray<ShaderSourcePrefix> m_CustomPrefixes;
   APIProperties m_APIProps;
   FrameDescription m_FrameInfo;
   const ActionDescription *m_FirstAction = NULL;

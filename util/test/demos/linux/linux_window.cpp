@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2021 Baldur Karlsson
+* Copyright (c) 2019-2022 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -55,6 +55,7 @@ Display *X11Window::GetDisplay()
 }
 
 X11Window::X11Window(int width, int height, int visualid_override, const char *title)
+    : GraphicsWindow(title)
 {
   uint32_t value_mask, value_list[32];
 
