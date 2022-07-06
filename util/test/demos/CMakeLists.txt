@@ -12,6 +12,7 @@ set(VULKAN_SRC
         vk/vk_adv_cbuffer_zoo.cpp
         vk/vk_buffer_truncation.cpp
         vk/vk_cbuffer_zoo.cpp
+        vk/vk_compute_only.cpp
         vk/vk_custom_border_color.cpp
         vk/vk_dedicated_allocation.cpp
         vk/vk_descriptor_index.cpp
@@ -76,6 +77,7 @@ set(OPENGL_SRC
         gl/gl_callstacks.cpp
         gl/gl_cbuffer_zoo.cpp
         gl/gl_depthstencil_fbo.cpp
+        gl/gl_depth_bounds.cpp
         gl/gl_discard_zoo.cpp
         gl/gl_draw_zoo.cpp
         gl/gl_empty_capture.cpp

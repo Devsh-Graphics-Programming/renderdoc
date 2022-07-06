@@ -406,19 +406,26 @@ void GetContextVersion(bool &ctxGLES, int &ctxVersion)
   }
 }
 
-void FetchEnabledExtensions()
+bool FetchEnabledExtensions()
 {
-  RDCEraseEl(HasExt);
-
   int ctxVersion = 0;
   bool ctxGLES = false;
   GetContextVersion(ctxGLES, ctxVersion);
 
+  if((ctxGLES && ctxVersion < 20) || (!ctxGLES && ctxVersion < 30))
+  {
+    RDCLOG("Not acting on unsupported GL context %s %d.%d", IsGLES ? "OpenGL ES" : "OpenGL",
+           (ctxVersion / 10), (ctxVersion % 10));
+    return false;
+  }
+
+  RDCLOG("Refreshing extension status based on %s %d.%d", IsGLES ? "OpenGL ES" : "OpenGL",
+         (ctxVersion / 10), (ctxVersion % 10));
+
   GLCoreVersion = RDCMAX(GLCoreVersion, ctxVersion);
   IsGLES = ctxGLES;
 
-  RDCLOG("Checking enabled extensions, running as %s %d.%d", IsGLES ? "OpenGL ES" : "OpenGL",
-         (ctxVersion / 10), (ctxVersion % 10));
+  RDCEraseEl(HasExt);
 
   // only use glGetStringi on 3.0 contexts and above (ES and GL), even if we have the function
   // pointer
@@ -461,6 +468,8 @@ void FetchEnabledExtensions()
     RDCERR("GL implementation has ARB_compute_shader but is not at least 4.2. Disabling compute.");
     HasExt[ARB_compute_shader] = false;
   }
+
+  return true;
 }
 
 void DoVendorChecks(GLPlatform &platform, GLWindowingData context)
@@ -880,6 +889,9 @@ void GLPushPopState::Push(bool modern)
 
     if(HasExt[EXT_transform_feedback])
       enableBits[6] = GL.glIsEnabled(eGL_RASTERIZER_DISCARD) != 0;
+
+    if(HasExt[EXT_depth_bounds_test])
+      enableBits[8] = GL.glIsEnabled(eGL_DEPTH_BOUNDS_TEST_EXT) != 0;
   }
   else
   {
@@ -931,6 +943,16 @@ void GLPushPopState::Push(bool modern)
   else
   {
     GL.glGetBooleanv(eGL_COLOR_WRITEMASK, ColorMask);
+  }
+
+  if(modern && HasExt[EXT_depth_bounds_test])
+  {
+    GL.glGetDoublev(eGL_DEPTH_BOUNDS_EXT, bounds);
+  }
+  else
+  {
+    bounds[0] = 0.0;
+    bounds[1] = 1.0;
   }
 
   if(!VendorCheck[VendorCheck_AMD_polygon_mode_query] && !IsGLES)
@@ -1051,6 +1073,14 @@ void GLPushPopState::Pop(bool modern)
       else
         GL.glDisable(eGL_RASTERIZER_DISCARD);
     }
+
+    if(HasExt[EXT_depth_bounds_test])
+    {
+      if(enableBits[8])
+        GL.glEnable(eGL_DEPTH_BOUNDS_TEST_EXT);
+      else
+        GL.glDisable(eGL_DEPTH_BOUNDS_TEST_EXT);
+    }
   }
   else
   {
@@ -1097,6 +1127,11 @@ void GLPushPopState::Pop(bool modern)
   else
   {
     GL.glColorMask(ColorMask[0], ColorMask[1], ColorMask[2], ColorMask[3]);
+  }
+
+  if(modern && HasExt[EXT_depth_bounds_test])
+  {
+    GL.glDepthBoundsEXT(bounds[0], bounds[1]);
   }
 
   if(!IsGLES)

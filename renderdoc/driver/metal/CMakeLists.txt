@@ -18,6 +18,7 @@ set(sources
     metal_function.cpp
     metal_function.h
     metal_function_bridge.mm
+    metal_common.cpp
     metal_common.h
     metal_command_queue.cpp
     metal_command_queue.h
@@ -31,6 +32,15 @@ set(sources
     metal_texture.cpp
     metal_texture.h
     metal_texture_bridge.mm
+    metal_buffer.cpp
+    metal_buffer.h
+    metal_buffer_bridge.mm
+    metal_blit_command_encoder.cpp
+    metal_blit_command_encoder.h
+    metal_blit_command_encoder_bridge.mm
+    metal_render_command_encoder.cpp
+    metal_render_command_encoder.h
+    metal_render_command_encoder_bridge.mm
     metal_core.cpp
     metal_core.h
     metal_manager.cpp

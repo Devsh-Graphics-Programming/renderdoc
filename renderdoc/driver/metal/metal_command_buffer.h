@@ -36,9 +36,15 @@ public:
                           WrappedMTLDevice *wrappedMTLDevice);
 
   void SetCommandQueue(WrappedMTLCommandQueue *commandQueue) { m_CommandQueue = commandQueue; }
-  MTL::CommandQueue *GetCommandQueue() { return (MTL::CommandQueue *)m_CommandQueue; }
+  WrappedMTLCommandQueue *GetCommandQueue() { return m_CommandQueue; }
+  DECLARE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLBlitCommandEncoder *, blitCommandEncoder);
+  DECLARE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLRenderCommandEncoder *,
+                                          renderCommandEncoderWithDescriptor,
+                                          RDMTL::RenderPassDescriptor &descriptor);
   DECLARE_FUNCTION_SERIALISED(void, presentDrawable, MTL::Drawable *drawable);
   DECLARE_FUNCTION_SERIALISED(void, commit);
+  DECLARE_FUNCTION_SERIALISED(void, enqueue);
+  DECLARE_FUNCTION_SERIALISED(void, waitUntilCompleted);
 
   enum
   {

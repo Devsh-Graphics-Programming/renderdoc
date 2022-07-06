@@ -156,6 +156,32 @@ D3D12_ROOT_PARAMETER1 cbvParam(D3D12_SHADER_VISIBILITY vis, UINT space, UINT reg
   return ret;
 }
 
+D3D12_ROOT_PARAMETER1 srvParam(D3D12_SHADER_VISIBILITY vis, UINT space, UINT reg)
+{
+  D3D12_ROOT_PARAMETER1 ret;
+
+  ret.ShaderVisibility = vis;
+  ret.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+  ret.Descriptor.RegisterSpace = space;
+  ret.Descriptor.ShaderRegister = reg;
+  ret.Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_NONE;
+
+  return ret;
+}
+
+D3D12_ROOT_PARAMETER1 uavParam(D3D12_SHADER_VISIBILITY vis, UINT space, UINT reg)
+{
+  D3D12_ROOT_PARAMETER1 ret;
+
+  ret.ShaderVisibility = vis;
+  ret.ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+  ret.Descriptor.RegisterSpace = space;
+  ret.Descriptor.ShaderRegister = reg;
+  ret.Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_NONE;
+
+  return ret;
+}
+
 D3D12_ROOT_PARAMETER1 constParam(D3D12_SHADER_VISIBILITY vis, UINT space, UINT reg, UINT num)
 {
   D3D12_ROOT_PARAMETER1 ret;
@@ -334,6 +360,12 @@ D3D12TextureCreator &D3D12TextureCreator::RTV()
 D3D12TextureCreator &D3D12TextureCreator::DSV()
 {
   m_TexDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+  return *this;
+}
+
+D3D12TextureCreator &D3D12TextureCreator::NoSRV()
+{
+  m_TexDesc.Flags |= D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
   return *this;
 }
 

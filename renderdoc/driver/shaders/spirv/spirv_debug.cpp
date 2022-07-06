@@ -26,10 +26,14 @@
 #include <math.h>
 #include <time.h>
 #include "common/formatting.h"
+#include "core/settings.h"
 #include "maths/half_convert.h"
 #include "os/os_specific.h"
 #include "spirv_op_helpers.h"
 #include "var_dispatch_helpers.h"
+
+RDOC_CONFIG(bool, Vulkan_Debug_StepToDebugValue, false,
+            "Treat DebugValue as a steppable executable instruction.");
 
 static bool ContainsNaNInf(const ShaderVariable &var)
 {
@@ -310,8 +314,9 @@ void ThreadState::WritePointerValue(Id pointer, const ShaderVariable &val)
     // This one is not included in any of the pointers lists above
     basechange.after = debugger.GetPointerValue(ids[ptrid]);
 
-    // if this is the first local write, mark this variable as becoming alive here
-    if(firstLocalWrite)
+    // if this is the first local write when we have no debug info, mark this variable as becoming
+    // alive here, instead of at its declaration
+    if(firstLocalWrite && !debugger.HasDebugInfo())
       basechange.before.name = "";
 
     m_State->changes.push_back(basechange);
@@ -322,7 +327,7 @@ void ThreadState::WritePointerValue(Id pointer, const ShaderVariable &val)
       pointers.push_back(ptrid);
 
     for(size_t i = 0; i < pointers.size(); i++)
-      lastWrite[pointers[i]] = nextInstruction;
+      lastWrite[pointers[i]] = m_State ? m_State->stepIndex : nextInstruction;
   }
 }
 
@@ -339,7 +344,7 @@ void ThreadState::SetDst(Id id, const ShaderVariable &val)
   ids[id] = val;
   ids[id].name = debugger.GetRawName(id);
 
-  lastWrite[id] = nextInstruction;
+  lastWrite[id] = m_State ? m_State->stepIndex : nextInstruction;
 
   auto it = std::lower_bound(live.begin(), live.end(), id);
   live.insert(it - live.begin(), id);
@@ -581,8 +586,19 @@ void ThreadState::SkipIgnoredInstructions()
     {
       if(debugger.IsDebugExtInstSet(Id::fromWord(it.word(3))))
       {
-        nextInstruction++;
-        continue;
+        if(Vulkan_Debug_StepToDebugValue())
+        {
+          if(ShaderDbg(it.word(4)) != ShaderDbg::Value || !debugger.InDebugScope(nextInstruction))
+          {
+            nextInstruction++;
+            continue;
+          }
+        }
+        else
+        {
+          nextInstruction++;
+          continue;
+        }
       }
     }
 
@@ -1295,7 +1311,6 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
 
         var.type = type.scalar().Type();
         var.columns = type.vector().count & 0xff;
-        var.value = ShaderValue();
       }
 
       SetDst(cast.result, var);
@@ -1903,6 +1918,36 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
       }
 
       SetDst(bitwise.result, var);
+      break;
+    }
+    case Op::GroupNonUniformBitwiseOr:
+    {
+      OpGroupNonUniformBitwiseOr group(it);
+
+      ShaderVariable var;
+
+      for(size_t i = 0; i < workgroup.size(); i++)
+      {
+        if(i == 0)
+        {
+          var = workgroup[i].GetSrc(group.value);
+        }
+        else
+        {
+          ShaderVariable b = workgroup[i].GetSrc(group.value);
+
+          for(uint8_t c = 0; c < var.columns; c++)
+          {
+#undef _IMPL
+#define _IMPL(I, S, U) comp<U>(var, c) = comp<U>(var, c) | comp<U>(b, c)
+
+            IMPL_FOR_INT_TYPES(_IMPL);
+          }
+        }
+      }
+
+      SetDst(group.result, var);
+
       break;
     }
     case Op::Not:
@@ -3469,7 +3514,6 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
     case Op::GroupNonUniformUMax:
     case Op::GroupNonUniformFMax:
     case Op::GroupNonUniformBitwiseAnd:
-    case Op::GroupNonUniformBitwiseOr:
     case Op::GroupNonUniformBitwiseXor:
     case Op::GroupNonUniformLogicalAnd:
     case Op::GroupNonUniformLogicalOr:
@@ -3498,6 +3542,8 @@ void ThreadState::StepNext(ShaderDebugState *state, const rdcarray<ThreadState> 
     case Op::GroupLogicalAndKHR:
     case Op::GroupLogicalOrKHR:
     case Op::GroupLogicalXorKHR:
+
+    case Op::GroupNonUniformRotateKHR:
     {
       RDCERR("Group opcodes not supported. SPIR-V should have been rejected by capability!");
 

@@ -64,7 +64,7 @@ void VulkanRenderState::BeginRenderPassAndApplyState(WrappedVulkan *vk, VkComman
     info.pDepthAttachment = &depth;
     if(depth.imageLayout == VK_IMAGE_LAYOUT_UNDEFINED)
       info.pDepthAttachment = NULL;
-    VkRenderingAttachmentInfo stencil = dynamicRendering.depth;
+    VkRenderingAttachmentInfo stencil = dynamicRendering.stencil;
     info.pStencilAttachment = &stencil;
     if(stencil.imageLayout == VK_IMAGE_LAYOUT_UNDEFINED)
       info.pStencilAttachment = NULL;
@@ -384,14 +384,20 @@ void VulkanRenderState::BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd,
     {
       if(dynamicStates[VkDynamicDepthBiasEnable])
         ObjDisp(cmd)->CmdSetDepthBiasEnableEXT(Unwrap(cmd), depthBiasEnable);
-      if(dynamicStates[VkDynamicLogicOpEXT])
-        ObjDisp(cmd)->CmdSetLogicOpEXT(Unwrap(cmd), logicOp);
-      if(dynamicStates[VkDynamicControlPointsEXT])
-        ObjDisp(cmd)->CmdSetPatchControlPointsEXT(Unwrap(cmd), patchControlPoints);
       if(dynamicStates[VkDynamicPrimRestart])
         ObjDisp(cmd)->CmdSetPrimitiveRestartEnableEXT(Unwrap(cmd), primRestartEnable);
       if(dynamicStates[VkDynamicRastDiscard])
         ObjDisp(cmd)->CmdSetRasterizerDiscardEnableEXT(Unwrap(cmd), rastDiscardEnable);
+    }
+    if(vk->ExtendedDynamicState2Logic())
+    {
+      if(dynamicStates[VkDynamicLogicOpEXT])
+        ObjDisp(cmd)->CmdSetLogicOpEXT(Unwrap(cmd), logicOp);
+    }
+    if(vk->ExtendedDynamicState2CPs())
+    {
+      if(dynamicStates[VkDynamicControlPointsEXT])
+        ObjDisp(cmd)->CmdSetPatchControlPointsEXT(Unwrap(cmd), patchControlPoints);
     }
 
     if(dynamicStates[VkDynamicLineWidth])

@@ -43,7 +43,7 @@
 #pragma clang diagnostic ignored "-Wobjc-missing-super-calls"
 - (void)dealloc
 {
-  GetWrapped(self)->Dealloc();
+  DeallocateObjCBridge(GetWrapped(self));
 }
 #pragma clang diagnostic pop
 
@@ -223,16 +223,15 @@
 
 - (nullable id<MTLBuffer>)newBufferWithLength:(NSUInteger)length options:(MTLResourceOptions)options
 {
-  METAL_NOT_HOOKED();
-  return [self.real newBufferWithLength:length options:options];
+  return id<MTLBuffer>(GetWrapped(self)->newBufferWithLength(length, (MTL::ResourceOptions)options));
 }
 
 - (nullable id<MTLBuffer>)newBufferWithBytes:(const void *)pointer
                                       length:(NSUInteger)length
                                      options:(MTLResourceOptions)options
 {
-  METAL_NOT_HOOKED();
-  return [self.real newBufferWithBytes:pointer length:length options:options];
+  return id<MTLBuffer>(
+      GetWrapped(self)->newBufferWithBytes(pointer, length, (MTL::ResourceOptions)options));
 }
 
 - (nullable id<MTLBuffer>)newBufferWithBytesNoCopy:(void *)pointer

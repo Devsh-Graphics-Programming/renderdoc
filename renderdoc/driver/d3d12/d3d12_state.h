@@ -60,6 +60,7 @@ struct D3D12RenderState
   D3D12Descriptor dsv;
 
   bool renderpass = false;
+  rdcarray<D3D12_RENDER_PASS_ENDING_ACCESS_RESOLVE_SUBRESOURCE_PARAMETERS> rpResolves;
   rdcarray<D3D12_RENDER_PASS_RENDER_TARGET_DESC> rpRTs;
   D3D12_RENDER_PASS_DEPTH_STENCIL_DESC rpDSV;
   D3D12_RENDER_PASS_FLAGS rpFlags;
@@ -75,6 +76,9 @@ struct D3D12RenderState
   {
     SignatureElement() : type(eRootUnknown), offset(0) {}
     SignatureElement(SignatureElementType t, ResourceId i, UINT64 o) : type(t), id(i), offset(o) {}
+    SignatureElement(SignatureElementType t, D3D12_GPU_VIRTUAL_ADDRESS addr);
+    SignatureElement(SignatureElementType t, D3D12_CPU_DESCRIPTOR_HANDLE handle);
+
     void SetConstant(UINT offs, UINT val) { SetConstants(1, &val, offs); }
     void SetConstants(UINT numVals, const void *vals, UINT offs)
     {

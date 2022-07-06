@@ -35,13 +35,17 @@ class MetalResourceManager;
 enum MetalResourceType
 {
   eResUnknown = 0,
+  eResBuffer,
   eResCommandBuffer,
   eResCommandQueue,
   eResDevice,
   eResLibrary,
   eResFunction,
   eResRenderPipelineState,
-  eResTexture
+  eResTexture,
+  eResRenderCommandEncoder,
+  eResBlitCommandEncoder,
+  eResMax
 };
 
 DECLARE_REFLECTION_ENUM(MetalResourceType);
@@ -60,8 +64,6 @@ struct WrappedMTLObject
   }
   ~WrappedMTLObject() = default;
 
-  void Dealloc();
-
   MTL::Device *GetDevice() { return (MTL::Device *)m_Device; }
   MetalResourceManager *GetResourceManager();
 
@@ -74,6 +76,11 @@ struct WrappedMTLObject
 };
 
 ResourceId GetResID(WrappedMTLObject *obj);
+
+inline ResourceId GetResID(WrappedMTLResource *obj)
+{
+  return GetResID((WrappedMTLObject *)obj);
+}
 
 template <typename WrappedType>
 MetalResourceRecord *GetRecord(WrappedType *obj)
@@ -110,12 +117,25 @@ struct UnwrapHelper
 METALCPP_WRAPPED_PROTOCOLS(WRAPPED_TYPE_HELPERS)
 #undef WRAPPED_TYPE_HELPERS
 
+inline MTL::Resource *Unwrap(WrappedMTLResource *obj)
+{
+  return Unwrap<MTL::Resource *>((WrappedMTLObject *)obj);
+}
+
+enum class MetalCmdBufferStatus : uint32_t
+{
+  NoFlags = 0,
+  Enqueued = 1 << 0,
+  Committed = 1 << 1,
+  Submitted = 1 << 2,
+  Presented = 1 << 3,
+};
+
+BITMASK_OPERATORS(MetalCmdBufferStatus);
+
 struct MetalCmdBufferRecordingInfo
 {
-  MetalCmdBufferRecordingInfo(WrappedMTLCommandQueue *parentQueue)
-      : queue(parentQueue), present(false), isEncoding(false), drawable(NULL)
-  {
-  }
+  MetalCmdBufferRecordingInfo(WrappedMTLCommandQueue *parentQueue) : queue(parentQueue) {}
   MetalCmdBufferRecordingInfo() = delete;
   MetalCmdBufferRecordingInfo(const MetalCmdBufferRecordingInfo &) = delete;
   MetalCmdBufferRecordingInfo(MetalCmdBufferRecordingInfo &&) = delete;
@@ -123,12 +143,11 @@ struct MetalCmdBufferRecordingInfo
   ~MetalCmdBufferRecordingInfo() {}
   WrappedMTLCommandQueue *queue;
 
-  // The drawable that present was called on
-  MTL::Drawable *drawable;
-  // AdvanceFrame/Present should be called after this buffer is committed.
-  bool present;
-  // an encoder is active : waiting for endEncoding to be called
-  bool isEncoding;
+  // The MetalLayer to present
+  CA::MetalLayer *outputLayer = NULL;
+  // The texture to present
+  WrappedMTLTexture *backBuffer = NULL;
+  MetalCmdBufferStatus flags = MetalCmdBufferStatus::NoFlags;
 };
 
 struct MetalResourceRecord : public ResourceRecord

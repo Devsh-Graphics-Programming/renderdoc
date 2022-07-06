@@ -29,6 +29,442 @@
 #define MTL_STRINGISE_BITFIELD_VALUE(a) STRINGISE_BITFIELD_CLASS_VALUE_NAMED(a, "MTL" #a)
 
 template <>
+rdcstr DoStringise(const MetalChunk &el)
+{
+  RDCCOMPILE_ASSERT((uint32_t)MetalChunk::Max == 1229, "Chunks changed without updating names");
+
+  BEGIN_ENUM_STRINGISE(MetalChunk)
+  {
+    STRINGISE_ENUM_CLASS(MTLCreateSystemDefaultDevice);
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newCommandQueue, "MTLDevice::newCommandQueue");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newCommandQueueWithMaxCommandBufferCount,
+                               "MTLDevice::newCommandQueueWithMaxCommandBufferCount");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newHeapWithDescriptor, "MTLDevice::newHeapWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newBufferWithLength, "MTLDevice::newBufferWithLength");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newBufferWithBytes, "MTLDevice::newBufferWithBytes");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newBufferWithBytesNoCopy,
+                               "MTLDevice::newBufferWithBytesNoCopy");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newDepthStencilStateWithDescriptor,
+                               "MTLDevice::newDepthStencilStateWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newTextureWithDescriptor,
+                               "MTLDevice::newTextureWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newTextureWithDescriptor_iosurface,
+                               "MTLDevice::newTextureWithDescriptor(iosurface, plane)");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newTextureWithDescriptor_nextDrawable,
+                               "[CAMetalLayer nextDrawable]");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newSharedTextureWithDescriptor,
+                               "MTLDevice::newSharedTextureWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newSharedTextureWithHandle,
+                               "MTLDevice::newSharedTextureWithHandle");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newSamplerStateWithDescriptor,
+                               "MTLDevice::newSamplerStateWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newDefaultLibrary, "MTLDevice::newDefaultLibrary");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newDefaultLibraryWithBundle,
+                               "MTLDevice::newDefaultLibraryWithBundle");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newLibraryWithFile, "MTLDevice::newLibraryWithFile");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newLibraryWithURL, "MTLDevice::newLibraryWithURL");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newLibraryWithData, "MTLDevice::newLibraryWithData");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newLibraryWithSource, "MTLDevice::newLibraryWithSource");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newLibraryWithStitchedDescriptor,
+                               "MTLDevice::newLibraryWithStitchedDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newRenderPipelineStateWithDescriptor,
+                               "MTLDevice::newRenderPipelineStateWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newRenderPipelineStateWithDescriptor_options,
+                               "MTLDevice::newRenderPipelineStateWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newComputePipelineStateWithFunction,
+                               "MTLDevice::newComputePipelineStateWithFunction");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newComputePipelineStateWithFunction_options,
+                               "MTLDevice::newComputePipelineStateWithFunction");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newComputePipelineStateWithDescriptor,
+                               "MTLDevice::newComputePipelineStateWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newFence, "MTLDevice::newFence");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newRenderPipelineStateWithTileDescriptor,
+                               "MTLDevice::newRenderPipelineStateWithTileDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newArgumentEncoderWithArguments,
+                               "MTLDevice::newArgumentEncoderWithArguments");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_supportsRasterizationRateMapWithLayerCount,
+                               "MTLDevice::supportsRasterizationRateMapWithLayerCount");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newRasterizationRateMapWithDescriptor,
+                               "MTLDevice::newRasterizationRateMapWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newIndirectCommandBufferWithDescriptor,
+                               "MTLDevice::newIndirectCommandBufferWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newEvent, "MTLDevice::newEvent");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newSharedEvent, "MTLDevice::newSharedEvent");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newSharedEventWithHandle,
+                               "MTLDevice::newSharedEventWithHandle");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newCounterSampleBufferWithDescriptor,
+                               "MTLDevice::newCounterSampleBufferWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newDynamicLibrary, "MTLDevice::newDynamicLibrary");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newDynamicLibraryWithURL,
+                               "MTLDevice::newDynamicLibraryWithURL");
+    STRINGISE_ENUM_CLASS_NAMED(MTLDevice_newBinaryArchiveWithDescriptor,
+                               "MTLDevice::newBinaryArchiveWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLLibrary_newFunctionWithName, "MTLLibrary::newFunctionWithName");
+    STRINGISE_ENUM_CLASS_NAMED(MTLLibrary_newFunctionWithName_constantValues,
+                               "MTLLibrary::newFunctionWithName");
+    STRINGISE_ENUM_CLASS_NAMED(MTLLibrary_newFunctionWithDescriptor,
+                               "MTLLibrary::newFunctionWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLLibrary_newIntersectionFunctionWithDescriptor,
+                               "MTLLibrary::newIntersectionFunctionWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLFunction_newArgumentEncoderWithBufferIndex,
+                               "MTLFunction::newArgumentEncoderWithBufferIndex");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandQueue_commandBuffer, "MTLCommandQueue::commandBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandQueue_commandBufferWithDescriptor,
+                               "MTLCommandQueue::commandBufferWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandQueue_commandBufferWithUnretainedReferences,
+                               "MTLCommandQueue::commandBufferWithUnretainedReferences");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_enqueue, "MTLCommandBuffer::enqueue");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_commit, "MTLCommandBuffer::commit");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_addScheduledHandler,
+                               "MTLCommandBuffer::addScheduledHandler");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_presentDrawable,
+                               "MTLCommandBuffer::presentDrawable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_presentDrawable_atTime,
+                               "MTLCommandBuffer::presentDrawable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_presentDrawable_afterMinimumDuration,
+                               "MTLCommandBuffer::presentDrawable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_waitUntilScheduled,
+                               "MTLCommandBuffer::waitUntilScheduled");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_addCompletedHandler,
+                               "MTLCommandBuffer::addCompletedHandler");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_waitUntilCompleted,
+                               "MTLCommandBuffer::waitUntilCompleted");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_blitCommandEncoder,
+                               "MTLCommandBuffer::blitCommandEncoder");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_renderCommandEncoderWithDescriptor,
+                               "MTLCommandBuffer::renderCommandEncoderWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_computeCommandEncoderWithDescriptor,
+                               "MTLCommandBuffer::computeCommandEncoderWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_blitCommandEncoderWithDescriptor,
+                               "MTLCommandBuffer::blitCommandEncoderWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_computeCommandEncoder,
+                               "MTLCommandBuffer::computeCommandEncoder");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_computeCommandEncoderWithDispatchType,
+                               "MTLCommandBuffer::computeCommandEncoderWithDispatchType");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_encodeWaitForEvent,
+                               "MTLCommandBuffer::encodeWaitForEvent");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_encodeSignalEvent,
+                               "MTLCommandBuffer::encodeSignalEvent");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_parallelRenderCommandEncoderWithDescriptor,
+                               "MTLCommandBuffer::parallelRenderCommandEncoderWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_resourceStateCommandEncoder,
+                               "MTLCommandBuffer::resourceStateCommandEncoder");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_resourceStateCommandEncoderWithDescriptor,
+                               "MTLCommandBuffer::resourceStateCommandEncoderWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_accelerationStructureCommandEncoder,
+                               "MTLCommandBuffer::accelerationStructureCommandEncoder");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_pushDebugGroup, "MTLCommandBuffer::pushDebugGroup");
+    STRINGISE_ENUM_CLASS_NAMED(MTLCommandBuffer_popDebugGroup, "MTLCommandBuffer::popDebugGroup");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_setPurgeableState, "MTLTexture::setPurgeableState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_makeAliasable, "MTLTexture::makeAliasable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_getBytes, "MTLTexture::getBytes");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_getBytes_slice, "MTLTexture::getBytes");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_replaceRegion, "MTLTexture::replaceRegion");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_replaceRegion_slice, "MTLTexture::replaceRegion");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_newTextureViewWithPixelFormat,
+                               "MTLTexture::newTextureViewWithPixelFormat");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_newTextureViewWithPixelFormat_subset,
+                               "MTLTexture::newTextureViewWithPixelFormat");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_newTextureViewWithPixelFormat_subset_swizzle,
+                               "MTLTexture::newTextureViewWithPixelFormat");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_newSharedTextureHandle,
+                               "MTLTexture::newSharedTextureHandle");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_remoteStorageTexture, "MTLTexture::remoteStorageTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLTexture_newRemoteTextureViewForDevice,
+                               "MTLTexture::newRemoteTextureViewForDevice");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderPipelineState_functionHandleWithFunction,
+                               "MTLRenderPipelineState::functionHandleWithFunction");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderPipelineState_newVisibleFunctionTableWithDescriptor,
+                               "MTLRenderPipelineState::newVisibleFunctionTableWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(
+        MTLRenderPipelineState_newIntersectionFunctionTableWithDescriptor,
+        "MTLRenderPipelineState::newIntersectionFunctionTableWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(
+        MTLRenderPipelineState_newRenderPipelineStateWithAdditionalBinaryFunctions,
+        "MTLRenderPipelineState::newRenderPipelineStateWithAdditionalBinaryFunctions");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_endEncoding,
+                               "MTLRenderCommandEncoder::endEncoding");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_insertDebugSignpost,
+                               "MTLRenderCommandEncoder::insertDebugSignpost");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_pushDebugGroup,
+                               "MTLRenderCommandEncoder::pushDebugGroup");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_popDebugGroup,
+                               "MTLRenderCommandEncoder::popDebugGroup");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setRenderPipelineState,
+                               "MTLRenderCommandEncoder::setRenderPipelineState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexBytes,
+                               "MTLRenderCommandEncoder::setVertexBytes");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexBuffer,
+                               "MTLRenderCommandEncoder::setVertexBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexBufferOffset,
+                               "MTLRenderCommandEncoder::setVertexBufferOffset");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexBuffers,
+                               "MTLRenderCommandEncoder::setVertexBuffers");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexTexture,
+                               "MTLRenderCommandEncoder::setVertexTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexTextures,
+                               "MTLRenderCommandEncoder::setVertexTextures");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexSamplerState,
+                               "MTLRenderCommandEncoder::setVertexSamplerState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexSamplerState_lodclamp,
+                               "MTLRenderCommandEncoder::setVertexSamplerState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexSamplerStates,
+                               "MTLRenderCommandEncoder::setVertexSamplerStates");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexSamplerStates_lodclamp,
+                               "MTLRenderCommandEncoder::setVertexSamplerStates");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexVisibleFunctionTable,
+                               "MTLRenderCommandEncoder::setVertexVisibleFunctionTable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexVisibleFunctionTables,
+                               "MTLRenderCommandEncoder::setVertexVisibleFunctionTables");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexIntersectionFunctionTable,
+                               "MTLRenderCommandEncoder::setVertexIntersectionFunctionTable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexIntersectionFunctionTables,
+                               "MTLRenderCommandEncoder::setVertexIntersectionFunctionTables");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexAccelerationStructure,
+                               "MTLRenderCommandEncoder::setVertexAccelerationStructure");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setViewport,
+                               "MTLRenderCommandEncoder::setViewport");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setViewports,
+                               "MTLRenderCommandEncoder::setViewports");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFrontFacingWinding,
+                               "MTLRenderCommandEncoder::setFrontFacingWinding");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVertexAmplificationCount,
+                               "MTLRenderCommandEncoder::setVertexAmplificationCount");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setCullMode,
+                               "MTLRenderCommandEncoder::setCullMode");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setDepthClipMode,
+                               "MTLRenderCommandEncoder::setDepthClipMode");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setDepthBias,
+                               "MTLRenderCommandEncoder::setDepthBias");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setScissorRect,
+                               "MTLRenderCommandEncoder::setScissorRect");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setScissorRects,
+                               "MTLRenderCommandEncoder::setScissorRects");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTriangleFillMode,
+                               "MTLRenderCommandEncoder::setTriangleFillMode");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentBytes,
+                               "MTLRenderCommandEncoder::setFragmentBytes");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentBuffer,
+                               "MTLRenderCommandEncoder::setFragmentBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentBufferOffset,
+                               "MTLRenderCommandEncoder::setFragmentBufferOffset");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentBuffers,
+                               "MTLRenderCommandEncoder::setFragmentBuffers");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentTexture,
+                               "MTLRenderCommandEncoder::setFragmentTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentTextures,
+                               "MTLRenderCommandEncoder::setFragmentTextures");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentSamplerState,
+                               "MTLRenderCommandEncoder::setFragmentSamplerState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentSamplerState_lodclamp,
+                               "MTLRenderCommandEncoder::setFragmentSamplerState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentSamplerStates,
+                               "MTLRenderCommandEncoder::setFragmentSamplerStates");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentSamplerStates_lodclamp,
+                               "MTLRenderCommandEncoder::setFragmentSamplerStates");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentVisibleFunctionTable,
+                               "MTLRenderCommandEncoder::setFragmentVisibleFunctionTable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentVisibleFunctionTables,
+                               "MTLRenderCommandEncoder::setFragmentVisibleFunctionTables");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentIntersectionFunctionTable,
+                               "MTLRenderCommandEncoder::setFragmentIntersectionFunctionTable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentIntersectionFunctionTables,
+                               "MTLRenderCommandEncoder::setFragmentIntersectionFunctionTables");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setFragmentAccelerationStructure,
+                               "MTLRenderCommandEncoder::setFragmentAccelerationStructure");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setBlendColor,
+                               "MTLRenderCommandEncoder::setBlendColor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setDepthStencilState,
+                               "MTLRenderCommandEncoder::setDepthStencilState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setStencilReferenceValue,
+                               "MTLRenderCommandEncoder::setStencilReferenceValue");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setStencilFrontReferenceValue,
+                               "MTLRenderCommandEncoder::setStencilFrontReferenceValue");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setVisibilityResultMode,
+                               "MTLRenderCommandEncoder::setVisibilityResultMode");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setColorStoreAction,
+                               "MTLRenderCommandEncoder::setColorStoreAction");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setDepthStoreAction,
+                               "MTLRenderCommandEncoder::setDepthStoreAction");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setStencilStoreAction,
+                               "MTLRenderCommandEncoder::setStencilStoreAction");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setColorStoreActionOptions,
+                               "MTLRenderCommandEncoder::setColorStoreActionOptions");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setDepthStoreActionOptions,
+                               "MTLRenderCommandEncoder::setDepthStoreActionOptions");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setStencilStoreActionOptions,
+                               "MTLRenderCommandEncoder::setStencilStoreActionOptions");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawPrimitives,
+                               "MTLRenderCommandEncoder::drawPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawPrimitives_instanced,
+                               "MTLRenderCommandEncoder::drawPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawPrimitives_instanced_base,
+                               "MTLRenderCommandEncoder::drawPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawPrimitives_indirect,
+                               "MTLRenderCommandEncoder::drawPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawIndexedPrimitives,
+                               "MTLRenderCommandEncoder::drawIndexedPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawIndexedPrimitives_instanced,
+                               "MTLRenderCommandEncoder::drawIndexedPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawIndexedPrimitives_instanced_base,
+                               "MTLRenderCommandEncoder::drawIndexedPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawIndexedPrimitives_indirect,
+                               "MTLRenderCommandEncoder::drawIndexedPrimitives");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_textureBarrier,
+                               "MTLRenderCommandEncoder::textureBarrier");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_updateFence,
+                               "MTLRenderCommandEncoder::updateFence");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_waitForFence,
+                               "MTLRenderCommandEncoder::waitForFence");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTessellationFactorBuffer,
+                               "MTLRenderCommandEncoder::setTessellationFactorBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTessellationFactorScale,
+                               "MTLRenderCommandEncoder::setTessellationFactorScale");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawPatches,
+                               "MTLRenderCommandEncoder::drawPatches");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawPatches_indirect,
+                               "MTLRenderCommandEncoder::drawPatches");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawIndexedPatches,
+                               "MTLRenderCommandEncoder::drawIndexedPatches");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_drawIndexedPatches_indirect,
+                               "MTLRenderCommandEncoder::drawIndexedPatches");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileBytes,
+                               "MTLRenderCommandEncoder::setTileBytes");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileBuffer,
+                               "MTLRenderCommandEncoder::setTileBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileBufferOffset,
+                               "MTLRenderCommandEncoder::setTileBufferOffset");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileBuffers,
+                               "MTLRenderCommandEncoder::setTileBuffers");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileTexture,
+                               "MTLRenderCommandEncoder::setTileTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileTextures,
+                               "MTLRenderCommandEncoder::setTileTextures");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileSamplerState,
+                               "MTLRenderCommandEncoder::setTileSamplerState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileSamplerState_lodclamp,
+                               "MTLRenderCommandEncoder::setTileSamplerState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileSamplerStates,
+                               "MTLRenderCommandEncoder::setTileSamplerStates");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileSamplerStates_lodclamp,
+                               "MTLRenderCommandEncoder::setTileSamplerStates");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileVisibleFunctionTable,
+                               "MTLRenderCommandEncoder::setTileVisibleFunctionTable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileVisibleFunctionTables,
+                               "MTLRenderCommandEncoder::setTileVisibleFunctionTables");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileIntersectionFunctionTable,
+                               "MTLRenderCommandEncoder::setTileIntersectionFunctionTable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileIntersectionFunctionTables,
+                               "MTLRenderCommandEncoder::setTileIntersectionFunctionTables");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setTileAccelerationStructure,
+                               "MTLRenderCommandEncoder::setTileAccelerationStructure");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_dispatchThreadsPerTile,
+                               "MTLRenderCommandEncoder::dispatchThreadsPerTile");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_setThreadgroupMemoryLength,
+                               "MTLRenderCommandEncoder::setThreadgroupMemoryLength");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useResource,
+                               "MTLRenderCommandEncoder::useResource");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useResource_stages,
+                               "MTLRenderCommandEncoder::useResource");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useResources,
+                               "MTLRenderCommandEncoder::useResources");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useResources_stages,
+                               "MTLRenderCommandEncoder::useResources");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useHeap, "MTLRenderCommandEncoder::useHeap");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useHeap_stages,
+                               "MTLRenderCommandEncoder::useHeap");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useHeaps,
+                               "MTLRenderCommandEncoder::useHeaps");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_useHeaps_stages,
+                               "MTLRenderCommandEncoder::useHeaps");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_executeCommandsInBuffer,
+                               "MTLRenderCommandEncoder::executeCommandsInBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_executeCommandsInBuffer_indirect,
+                               "MTLRenderCommandEncoder::executeCommandsInBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_memoryBarrierWithScope,
+                               "MTLRenderCommandEncoder::memoryBarrierWithScope");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_memoryBarrierWithResources,
+                               "MTLRenderCommandEncoder::memoryBarrierWithResources");
+    STRINGISE_ENUM_CLASS_NAMED(MTLRenderCommandEncoder_sampleCountersInBuffer,
+                               "MTLRenderCommandEncoder::sampleCountersInBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_setPurgeableState, "MTLBuffer::setPurgeableState");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_makeAliasable, "MTLBuffer::makeAliasable");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_contents, "MTLBuffer::contents");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_didModifyRange, "MTLBuffer::didModifyRange");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_newTextureWithDescriptor,
+                               "MTLBuffer::newTextureWithDescriptor");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_addDebugMarker, "MTLBuffer::addDebugMarker");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_removeAllDebugMarkers, "MTLBuffer::removeAllDebugMarkers");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_remoteStorageBuffer, "MTLBuffer::remoteStorageBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_newRemoteBufferViewForDevice,
+                               "MTLBuffer::newRemoteBufferViewForDevice");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBuffer_InternalModifyCPUContents,
+                               "Internal_MTLBufferModifyCPUContents");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_setLabel, "MTLBlitCommandEncoder::setLabel");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_endEncoding,
+                               "MTLBlitCommandEncoder::endEncoding");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_insertDebugSignpost,
+                               "MTLBlitCommandEncoder::insertDebugSignpost");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_pushDebugGroup,
+                               "MTLBlitCommandEncoder::pushDebugGroup");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_popDebugGroup,
+                               "MTLBlitCommandEncoder::popDebugGroup");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_synchronizeResource,
+                               "MTLBlitCommandEncoder::synchronizeResource");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_synchronizeTexture,
+                               "MTLBlitCommandEncoder::synchronizeTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromBuffer_toBuffer,
+                               "MTLBlitCommandEncoder::copyFromBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromBuffer_toTexture,
+                               "MTLBlitCommandEncoder::copyFromBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromBuffer_toTexture_options,
+                               "MTLBlitCommandEncoder::copyFromBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromTexture_toBuffer,
+                               "MTLBlitCommandEncoder::copyFromTexture_toBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromTexture_toBuffer_options,
+                               "MTLBlitCommandEncoder::copyFromTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromTexture_toTexture,
+                               "MTLBlitCommandEncoder::copyFromTexture_toTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromTexture_toTexture_slice_level_origin,
+                               "MTLBlitCommandEncoder::copyFromTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyFromTexture_toTexture_slice_level_count,
+                               "MTLBlitCommandEncoder::copyFromTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_generateMipmapsForTexture,
+                               "MTLBlitCommandEncoder::generateMipmapsForTexture");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_fillBuffer,
+                               "MTLBlitCommandEncoder::fillBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_updateFence,
+                               "MTLBlitCommandEncoder::updateFence");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_waitForFence,
+                               "MTLBlitCommandEncoder::waitForFence");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_getTextureAccessCounters,
+                               "MTLBlitCommandEncoder::getTextureAccessCounters");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_resetTextureAccessCounters,
+                               "MTLBlitCommandEncoder::resetTextureAccessCounters");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_optimizeContentsForGPUAccess,
+                               "MTLBlitCommandEncoder::optimizeContentsForGPUAccess");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_optimizeContentsForGPUAccess_slice_level,
+                               "MTLBlitCommandEncoder::optimizeContentsForGPUAccess");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_optimizeContentsForCPUAccess,
+                               "MTLBlitCommandEncoder::optimizeContentsForCPUAccess");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_optimizeContentsForCPUAccess_slice_level,
+                               "MTLBlitCommandEncoder::optimizeContentsForCPUAccess");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_resetCommandsInBuffer,
+                               "MTLBlitCommandEncoder::resetCommandsInBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_copyIndirectCommandBuffer,
+                               "MTLBlitCommandEncoder::copyIndirectCommandBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_optimizeIndirectCommandBuffer,
+                               "MTLBlitCommandEncoder::optimizeIndirectCommandBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_sampleCountersInBuffer,
+                               "MTLBlitCommandEncoder::sampleCountersInBuffer");
+    STRINGISE_ENUM_CLASS_NAMED(MTLBlitCommandEncoder_resolveCounters,
+                               "MTLBlitCommandEncoder::resolveCounters");
+    STRINGISE_ENUM_CLASS_NAMED(Max, "Max Chunk");
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
 rdcstr DoStringise(const MTL::Mutability &el)
 {
   BEGIN_ENUM_STRINGISE(MTL::Mutability)
@@ -487,6 +923,58 @@ rdcstr DoStringise(const MTL::TextureSwizzle &el)
 }
 
 template <>
+rdcstr DoStringise(const MTL::PrimitiveType &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::PrimitiveType)
+  {
+    MTL_STRINGISE_ENUM(PrimitiveTypePoint);
+    MTL_STRINGISE_ENUM(PrimitiveTypeLine);
+    MTL_STRINGISE_ENUM(PrimitiveTypeLineStrip);
+    MTL_STRINGISE_ENUM(PrimitiveTypeTriangle);
+    MTL_STRINGISE_ENUM(PrimitiveTypeTriangleStrip);
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::LoadAction &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::LoadAction)
+  {
+    MTL_STRINGISE_ENUM(LoadActionDontCare);
+    MTL_STRINGISE_ENUM(LoadActionLoad);
+    MTL_STRINGISE_ENUM(LoadActionClear);
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::StoreAction &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::StoreAction)
+  {
+    MTL_STRINGISE_ENUM(StoreActionDontCare);
+    MTL_STRINGISE_ENUM(StoreActionStore);
+    MTL_STRINGISE_ENUM(StoreActionMultisampleResolve);
+    MTL_STRINGISE_ENUM(StoreActionStoreAndMultisampleResolve);
+    MTL_STRINGISE_ENUM(StoreActionUnknown);
+    MTL_STRINGISE_ENUM(StoreActionCustomSampleDepthStore);
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::StoreActionOptions &el)
+{
+  BEGIN_BITFIELD_STRINGISE(MTL::StoreActionOptions)
+  {
+    MTL_STRINGISE_BITFIELD_VALUE(StoreActionOptionNone);
+    MTL_STRINGISE_BITFIELD_BIT(StoreActionOptionCustomSamplePositions);
+  }
+  END_BITFIELD_STRINGISE()
+}
+
+template <>
 rdcstr DoStringise(const MTL::BlendFactor &el)
 {
   BEGIN_ENUM_STRINGISE(MTL::BlendFactor)
@@ -539,6 +1027,135 @@ rdcstr DoStringise(const MTL::ColorWriteMask &el)
     MTL_STRINGISE_BITFIELD_BIT(ColorWriteMaskBlue);
     MTL_STRINGISE_BITFIELD_BIT(ColorWriteMaskGreen);
     MTL_STRINGISE_BITFIELD_BIT(ColorWriteMaskRed);
+  }
+  END_BITFIELD_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::MultisampleDepthResolveFilter &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::MultisampleDepthResolveFilter)
+  {
+    MTL_STRINGISE_ENUM(MultisampleDepthResolveFilterSample0);
+    MTL_STRINGISE_ENUM(MultisampleDepthResolveFilterMin);
+    MTL_STRINGISE_ENUM(MultisampleDepthResolveFilterMax);
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::MultisampleStencilResolveFilter &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::MultisampleStencilResolveFilter)
+  {
+    MTL_STRINGISE_ENUM(MultisampleStencilResolveFilterSample0);
+    MTL_STRINGISE_ENUM(MultisampleStencilResolveFilterDepthResolvedSample);
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::BlitOption &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::BlitOption)
+  {
+    MTL_STRINGISE_ENUM(BlitOptionNone);
+    MTL_STRINGISE_ENUM(BlitOptionDepthFromDepthStencil);
+    MTL_STRINGISE_ENUM(BlitOptionRowLinearPVRTC);
+    MTL_STRINGISE_ENUM(BlitOptionStencilFromDepthStencil);
+  }
+  END_ENUM_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::DeviceLocation &el)
+{
+  BEGIN_BITFIELD_STRINGISE(MTL::DeviceLocation)
+  {
+    MTL_STRINGISE_BITFIELD_BIT(DeviceLocationBuiltIn);
+    MTL_STRINGISE_BITFIELD_BIT(DeviceLocationSlot);
+    MTL_STRINGISE_BITFIELD_BIT(DeviceLocationExternal);
+    MTL_STRINGISE_BITFIELD_BIT(DeviceLocationUnspecified);
+  }
+  END_BITFIELD_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::ArgumentBuffersTier &el)
+{
+  BEGIN_BITFIELD_STRINGISE(MTL::ArgumentBuffersTier)
+  {
+    MTL_STRINGISE_BITFIELD_BIT(ArgumentBuffersTier1);
+    MTL_STRINGISE_BITFIELD_BIT(ArgumentBuffersTier2);
+  }
+  END_BITFIELD_STRINGISE()
+}
+
+template <>
+rdcstr DoStringise(const MTL::DepthClipMode &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::DepthClipMode);
+  {
+    MTL_STRINGISE_ENUM(DepthClipModeClip);
+    MTL_STRINGISE_ENUM(DepthClipModeClamp);
+  }
+  END_ENUM_STRINGISE();
+}
+
+template <>
+rdcstr DoStringise(const MTL::TriangleFillMode &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::TriangleFillMode);
+  {
+    MTL_STRINGISE_ENUM(TriangleFillModeFill);
+    MTL_STRINGISE_ENUM(TriangleFillModeLines);
+  }
+  END_ENUM_STRINGISE();
+}
+
+template <>
+rdcstr DoStringise(const MTL::CullMode &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::CullMode);
+  {
+    MTL_STRINGISE_ENUM(CullModeNone);
+    MTL_STRINGISE_ENUM(CullModeFront);
+    MTL_STRINGISE_ENUM(CullModeBack);
+  }
+  END_ENUM_STRINGISE();
+};
+
+template <>
+rdcstr DoStringise(const MetalResourceType &el)
+{
+  RDCCOMPILE_ASSERT((uint32_t)MetalResourceType::eResMax == 11, "MetalResourceType changed");
+  BEGIN_ENUM_STRINGISE(MetalResourceType);
+  {
+    STRINGISE_ENUM(eResUnknown);
+    STRINGISE_ENUM(eResBuffer);
+    STRINGISE_ENUM(eResCommandBuffer);
+    STRINGISE_ENUM(eResCommandQueue);
+    STRINGISE_ENUM(eResDevice);
+    STRINGISE_ENUM(eResLibrary);
+    STRINGISE_ENUM(eResFunction);
+    STRINGISE_ENUM(eResRenderPipelineState);
+    STRINGISE_ENUM(eResTexture);
+    STRINGISE_ENUM(eResRenderCommandEncoder);
+    STRINGISE_ENUM(eResBlitCommandEncoder);
+  }
+  END_ENUM_STRINGISE();
+}
+
+template <>
+rdcstr DoStringise(const MetalCmdBufferStatus &el)
+{
+  BEGIN_BITFIELD_STRINGISE(MetalCmdBufferStatus)
+  {
+    STRINGISE_BITFIELD_CLASS_VALUE(NoFlags);
+    STRINGISE_BITFIELD_CLASS_BIT(Enqueued);
+    STRINGISE_BITFIELD_CLASS_BIT(Committed);
+    STRINGISE_BITFIELD_CLASS_BIT(Submitted);
+    STRINGISE_BITFIELD_CLASS_BIT(Presented);
   }
   END_BITFIELD_STRINGISE()
 }

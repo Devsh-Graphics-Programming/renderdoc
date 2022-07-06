@@ -40,7 +40,7 @@
 #pragma clang diagnostic ignored "-Wobjc-missing-super-calls"
 - (void)dealloc
 {
-  GetWrapped(self)->Dealloc();
+  DeallocateObjCBridge(GetWrapped(self));
 }
 #pragma clang diagnostic pop
 
@@ -122,8 +122,7 @@
 
 - (void)enqueue
 {
-  METAL_NOT_HOOKED();
-  [self.real enqueue];
+  GetWrapped(self)->enqueue();
 }
 
 - (void)commit
@@ -170,8 +169,7 @@
 
 - (void)waitUntilCompleted
 {
-  METAL_NOT_HOOKED();
-  return [self.real waitUntilCompleted];
+  GetWrapped(self)->waitUntilCompleted();
 }
 
 - (MTLCommandBufferStatus)status
@@ -186,15 +184,15 @@
 
 - (nullable id<MTLBlitCommandEncoder>)blitCommandEncoder
 {
-  METAL_NOT_HOOKED();
-  return [self.real blitCommandEncoder];
+  return id<MTLBlitCommandEncoder>(GetWrapped(self)->blitCommandEncoder());
 }
 
 - (nullable id<MTLRenderCommandEncoder>)renderCommandEncoderWithDescriptor:
     (MTLRenderPassDescriptor *)renderPassDescriptor
 {
-  METAL_NOT_HOOKED();
-  return [self.real renderCommandEncoderWithDescriptor:renderPassDescriptor];
+  RDMTL::RenderPassDescriptor rdDescriptor((MTL::RenderPassDescriptor *)renderPassDescriptor);
+  return id<MTLRenderCommandEncoder>(
+      GetWrapped(self)->renderCommandEncoderWithDescriptor(rdDescriptor));
 }
 
 - (nullable id<MTLComputeCommandEncoder>)computeCommandEncoderWithDescriptor:

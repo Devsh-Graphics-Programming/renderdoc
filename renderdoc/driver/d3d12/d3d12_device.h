@@ -682,6 +682,8 @@ private:
   RDResult m_FailedReplayResult = ResultCode::APIReplayFailed;
 
   bool m_AppControlledCapture = false;
+  bool m_FirstFrameCapture = false;
+  void *m_FirstFrameCaptureWindow = NULL;
 
   Threading::RWLock m_CapTransitionLock;
   CaptureState m_State;
@@ -914,9 +916,9 @@ public:
   void GPUSyncAllQueues();
 
   RDCDriver GetFrameCaptureDriver() { return RDCDriver::D3D12; }
-  void StartFrameCapture(void *dev, void *wnd);
-  bool EndFrameCapture(void *dev, void *wnd);
-  bool DiscardFrameCapture(void *dev, void *wnd);
+  void StartFrameCapture(DeviceOwnedWindow devWnd);
+  bool EndFrameCapture(DeviceOwnedWindow devWnd);
+  bool DiscardFrameCapture(DeviceOwnedWindow devWnd);
 
   template <typename SerialiserType>
   bool Serialise_Present(SerialiserType &ser, ID3D12Resource *PresentedImage, UINT SyncInterval,

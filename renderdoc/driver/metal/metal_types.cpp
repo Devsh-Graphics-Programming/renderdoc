@@ -23,12 +23,15 @@
  ******************************************************************************/
 
 #include "metal_types.h"
+#include "metal_blit_command_encoder.h"
+#include "metal_buffer.h"
 #include "metal_command_buffer.h"
 #include "metal_command_queue.h"
 #include "metal_device.h"
 #include "metal_function.h"
 #include "metal_library.h"
 #include "metal_manager.h"
+#include "metal_render_command_encoder.h"
 #include "metal_render_pipeline_state.h"
 #include "metal_resources.h"
 #include "metal_texture.h"
@@ -37,27 +40,36 @@ RDCCOMPILE_ASSERT(sizeof(NS::Integer) == sizeof(std::intptr_t), "NS::Integer siz
 RDCCOMPILE_ASSERT(sizeof(NS::UInteger) == sizeof(std::uintptr_t),
                   "NS::UInteger size does not match");
 
-#define DEFINE_OBJC_HELPERS(CPPTYPE)                                                      \
-  void AllocateObjCBridge(WrappedMTL##CPPTYPE *wrappedCPP)                                \
-  {                                                                                       \
-    RDCCOMPILE_ASSERT((offsetof(WrappedMTL##CPPTYPE, m_ObjcBridge) == 0),                 \
-                      "m_ObjcBridge must be at offsetof 0");                              \
-    const char *const className = "ObjCBridgeMTL" #CPPTYPE;                               \
-    static Class klass = objc_lookUpClass(className);                                     \
-    static size_t classSize = class_getInstanceSize(klass);                               \
-    if(classSize != sizeof(wrappedCPP->m_ObjcBridge))                                     \
-    {                                                                                     \
-      RDCFATAL("'%s' classSize != sizeof(m_ObjcBridge) %lu != %lu", className, classSize, \
-               sizeof(wrappedCPP->m_ObjcBridge));                                         \
-    }                                                                                     \
-    wrappedCPP->m_ObjcBridge = klass;                                                     \
-    MTL::CPPTYPE *real = (MTL::CPPTYPE *)wrappedCPP->m_Real;                              \
-    if(real)                                                                              \
-    {                                                                                     \
-      id objc = (id)&wrappedCPP->m_ObjcBridge;                                            \
-      objc_setAssociatedObject((id)real, objc, objc, OBJC_ASSOCIATION_RETAIN);            \
-      ((MTL::CPPTYPE *)objc)->release();                                                  \
-    }                                                                                     \
+#define DEFINE_OBJC_HELPERS(CPPTYPE)                                                              \
+  void AllocateObjCBridge(WrappedMTL##CPPTYPE *wrappedCPP)                                        \
+  {                                                                                               \
+    RDCCOMPILE_ASSERT((offsetof(WrappedMTL##CPPTYPE, m_ObjcBridge) == 0),                         \
+                      "m_ObjcBridge must be at offsetof 0");                                      \
+    const char *const className = "ObjCBridgeMTL" #CPPTYPE;                                       \
+    static Class klass = objc_lookUpClass(className);                                             \
+    static size_t classSize = class_getInstanceSize(klass);                                       \
+    if(classSize != sizeof(wrappedCPP->m_ObjcBridge))                                             \
+    {                                                                                             \
+      RDCFATAL("'%s' classSize != sizeof(m_ObjcBridge) %lu != %lu", className, classSize,         \
+               sizeof(wrappedCPP->m_ObjcBridge));                                                 \
+    }                                                                                             \
+    id objc = objc_constructInstance(klass, &wrappedCPP->m_ObjcBridge);                           \
+    if(objc != (id)&wrappedCPP->m_ObjcBridge)                                                     \
+    {                                                                                             \
+      RDCFATAL("'%s' objc != m_ObjcBridge %p != %p", className, objc, &wrappedCPP->m_ObjcBridge); \
+    }                                                                                             \
+    MTL::CPPTYPE *real = (MTL::CPPTYPE *)wrappedCPP->m_Real;                                      \
+    if(real)                                                                                      \
+    {                                                                                             \
+      objc_setAssociatedObject((id)real, objc, objc, OBJC_ASSOCIATION_RETAIN);                    \
+      ((MTL::CPPTYPE *)objc)->release();                                                          \
+    }                                                                                             \
+  }                                                                                               \
+  void DeallocateObjCBridge(WrappedMTL##CPPTYPE *wrappedCPP)                                      \
+  {                                                                                               \
+    wrappedCPP->m_ObjcBridge = NULL;                                                              \
+    wrappedCPP->m_Real = NULL;                                                                    \
+    wrappedCPP->GetResourceManager()->ReleaseWrappedResource(wrappedCPP);                         \
   }
 
 METALCPP_WRAPPED_PROTOCOLS(DEFINE_OBJC_HELPERS)
@@ -89,6 +101,21 @@ static bool ValidData(MTL::PipelineBufferDescriptor *descriptor)
 static bool ValidData(MTL::RenderPipelineColorAttachmentDescriptor *descriptor)
 {
   if(descriptor->pixelFormat() == MTL::PixelFormatInvalid)
+    return false;
+  return true;
+}
+
+static bool ValidData(MTL::RenderPassColorAttachmentDescriptor *descriptor)
+{
+  MTL::RenderPassAttachmentDescriptor *base = (MTL::RenderPassAttachmentDescriptor *)descriptor;
+  if(!base->texture() && !base->resolveTexture())
+    return false;
+  return true;
+}
+
+static bool ValidData(MTL::RenderPassSampleBufferAttachmentDescriptor *descriptor)
+{
+  if(!descriptor->sampleBuffer())
     return false;
   return true;
 }
@@ -354,11 +381,11 @@ RenderPipelineDescriptor::RenderPipelineDescriptor(MTL::RenderPipelineDescriptor
                ValidData);
   GETOBJCARRAY(PipelineBufferDescriptor, MAX_RENDER_PASS_BUFFER_ATTACHMENTS, fragmentBuffers,
                ValidData);
-  // TODO: will MTL::BinaryArchive need to be a wrapped resource
-  // rdcarray<MTL::BinaryArchive*> binaryArchives;
-  // TODO: will MTL::DynamicLibrary need to be a wrapped resource
-  // rdcarray<MTL::DynamicLibrary*> vertexPreloadedLibraries;
-  // rdcarray<MTL::DynamicLibrary*> fragmentPreloadedLibraries;
+  // TODO: when WrappedMTLBinaryArchive exists
+  // GETWRAPPEDNSARRAY(BinaryArchive, binaryArchives);
+  // TODO: when WrappedMTLDynamicLibrary exists
+  // GETWRAPPEDNSARRAY(DynamicLibrary, vertexPreloadedLibraries);
+  // GETWRAPPEDNSARRAY(DynamicLibrary, fragmentPreloadedLibraries);
 }
 
 RenderPipelineDescriptor::operator MTL::RenderPipelineDescriptor *()
@@ -391,11 +418,13 @@ RenderPipelineDescriptor::operator MTL::RenderPipelineDescriptor *()
   COPYTOOBJCARRAY(PipelineBufferDescriptor, vertexBuffers);
   COPYTOOBJCARRAY(PipelineBufferDescriptor, fragmentBuffers);
   objc->setSupportIndirectCommandBuffers(supportIndirectCommandBuffers);
-  // TODO: will MTL::BinaryArchive need to be a wrapped resource
-  // rdcarray<MTL::BinaryArchive*> binaryArchives;
-  // TODO: will MTL::DynamicLibrary need to be a wrapped resource
-  // rdcarray<MTL::DynamicLibrary*> vertexPreloadedLibraries;
-  // rdcarray<MTL::DynamicLibrary*> fragmentPreloadedLibraries;
+  // TODO: when WrappedMTLBinaryArchive exists
+  // objc->setBinaryArchives(CreateUnwrappedNSArray<MTL::BinaryArchive *>(binaryArchives));
+  // TODO: when WrappedMTLDynamicLibrary exists
+  // objc->setVertexPreloadedLibraries(CreateUnwrappedNSArray<MTL::DynamicLibrary
+  // *>(vertexPreloadedLibraries));
+  // objc->setFragmentPreloadedLibraries(CreateUnwrappedNSArray<MTL::DynamicLibrary
+  // *>(fragmentPreloadedLibraries));
   vertexLinkedFunctions.CopyTo(objc->vertexLinkedFunctions());
   fragmentLinkedFunctions.CopyTo(objc->fragmentLinkedFunctions());
   objc->setSupportAddingVertexBinaryFunctions(supportAddingVertexBinaryFunctions);
@@ -403,6 +432,150 @@ RenderPipelineDescriptor::operator MTL::RenderPipelineDescriptor *()
   objc->setMaxVertexCallStackDepth(maxVertexCallStackDepth);
   objc->setMaxFragmentCallStackDepth(maxFragmentCallStackDepth);
 
+  return objc;
+}
+
+RenderPassAttachmentDescriptor::RenderPassAttachmentDescriptor(MTL::RenderPassAttachmentDescriptor *objc)
+    : texture(GetWrapped(objc->texture())),
+      level(objc->level()),
+      slice(objc->slice()),
+      depthPlane(objc->depthPlane()),
+      resolveTexture(GetWrapped(objc->resolveTexture())),
+      resolveLevel(objc->resolveLevel()),
+      resolveSlice(objc->resolveSlice()),
+      resolveDepthPlane(objc->resolveDepthPlane()),
+      loadAction(objc->loadAction()),
+      storeAction(objc->storeAction()),
+      storeActionOptions(objc->storeActionOptions())
+{
+}
+
+void RenderPassAttachmentDescriptor::CopyTo(MTL::RenderPassAttachmentDescriptor *objc)
+{
+  objc->setTexture(Unwrap(texture));
+  objc->setLevel(level);
+  objc->setSlice(slice);
+  objc->setDepthPlane(depthPlane);
+  objc->setResolveTexture(Unwrap(resolveTexture));
+  objc->setResolveLevel(resolveLevel);
+  objc->setResolveSlice(resolveSlice);
+  objc->setResolveDepthPlane(resolveDepthPlane);
+  objc->setLoadAction(loadAction);
+  objc->setStoreAction(storeAction);
+  objc->setStoreActionOptions(storeActionOptions);
+}
+
+RenderPassColorAttachmentDescriptor::RenderPassColorAttachmentDescriptor(
+    MTL::RenderPassColorAttachmentDescriptor *objc)
+    : RenderPassAttachmentDescriptor((MTL::RenderPassAttachmentDescriptor *)objc),
+      clearColor(objc->clearColor())
+{
+}
+
+void RenderPassColorAttachmentDescriptor::CopyTo(MTL::RenderPassColorAttachmentDescriptor *objc)
+{
+  ((RenderPassAttachmentDescriptor *)this)->CopyTo((MTL::RenderPassAttachmentDescriptor *)objc);
+  objc->setClearColor(clearColor);
+}
+
+RenderPassDepthAttachmentDescriptor::RenderPassDepthAttachmentDescriptor(
+    MTL::RenderPassDepthAttachmentDescriptor *objc)
+    : RenderPassAttachmentDescriptor((MTL::RenderPassAttachmentDescriptor *)objc),
+      clearDepth(objc->clearDepth()),
+      depthResolveFilter(objc->depthResolveFilter())
+{
+}
+
+void RenderPassDepthAttachmentDescriptor::CopyTo(MTL::RenderPassDepthAttachmentDescriptor *objc)
+{
+  ((RenderPassAttachmentDescriptor *)this)->CopyTo((MTL::RenderPassAttachmentDescriptor *)objc);
+  objc->setClearDepth(clearDepth);
+  objc->setDepthResolveFilter(depthResolveFilter);
+}
+
+RenderPassStencilAttachmentDescriptor::RenderPassStencilAttachmentDescriptor(
+    MTL::RenderPassStencilAttachmentDescriptor *objc)
+    : RenderPassAttachmentDescriptor((MTL::RenderPassAttachmentDescriptor *)objc),
+      clearStencil(objc->clearStencil()),
+      stencilResolveFilter(objc->stencilResolveFilter())
+{
+}
+
+void RenderPassStencilAttachmentDescriptor::CopyTo(MTL::RenderPassStencilAttachmentDescriptor *objc)
+{
+  ((RenderPassAttachmentDescriptor *)this)->CopyTo((MTL::RenderPassAttachmentDescriptor *)objc);
+  objc->setClearStencil(clearStencil);
+  objc->setStencilResolveFilter(stencilResolveFilter);
+}
+
+RenderPassSampleBufferAttachmentDescriptor::RenderPassSampleBufferAttachmentDescriptor(
+    MTL::RenderPassSampleBufferAttachmentDescriptor *objc)
+    :    // TODO: when WrappedMTLCounterSampleBuffer exists
+      // sampleBuffer(GetWrapped(objc->sampleBuffer())),
+      startOfVertexSampleIndex(objc->startOfVertexSampleIndex()),
+      endOfVertexSampleIndex(objc->endOfVertexSampleIndex()),
+      startOfFragmentSampleIndex(objc->startOfFragmentSampleIndex()),
+      endOfFragmentSampleIndex(objc->endOfFragmentSampleIndex())
+{
+}
+
+void RenderPassSampleBufferAttachmentDescriptor::CopyTo(
+    MTL::RenderPassSampleBufferAttachmentDescriptor *objc)
+{
+  // TODO: when WrappedMTLCounterSampleBuffer exists
+  // objc->setSampleBuffer(Unwrap(sampleBuffer));
+  objc->setStartOfVertexSampleIndex(startOfVertexSampleIndex);
+  objc->setEndOfVertexSampleIndex(endOfVertexSampleIndex);
+  objc->setStartOfFragmentSampleIndex(startOfFragmentSampleIndex);
+  objc->setEndOfFragmentSampleIndex(endOfFragmentSampleIndex);
+}
+
+RenderPassDescriptor::RenderPassDescriptor(MTL::RenderPassDescriptor *objc)
+    : depthAttachment(objc->depthAttachment()),
+      stencilAttachment(objc->stencilAttachment()),
+      visibilityResultBuffer(GetWrapped(objc->visibilityResultBuffer())),
+      renderTargetArrayLength(objc->renderTargetArrayLength()),
+      imageblockSampleLength(objc->imageblockSampleLength()),
+      threadgroupMemoryLength(objc->threadgroupMemoryLength()),
+      tileWidth(objc->tileWidth()),
+      tileHeight(objc->tileHeight()),
+      defaultRasterSampleCount(objc->defaultRasterSampleCount()),
+      renderTargetWidth(objc->renderTargetWidth()),
+      renderTargetHeight(objc->renderTargetHeight())
+// TODO: when WrappedRasterizationRateMap exists
+// rasterizationRateMap(objc->rasterizationRateMap())
+{
+  GETOBJCARRAY(RenderPassColorAttachmentDescriptor, MAX_RENDER_PASS_COLOR_ATTACHMENTS,
+               colorAttachments, ValidData);
+  uint32_t count = objc->getSamplePositions(NULL, 0);
+  if(count)
+  {
+    samplePositions.resize(count);
+    objc->getSamplePositions(samplePositions.data(), count);
+  }
+  GETOBJCARRAY(RenderPassSampleBufferAttachmentDescriptor,
+               MAX_RENDER_PASS_SAMPLE_BUFFER_ATTACHMENTS, sampleBufferAttachments, ValidData);
+}
+
+RenderPassDescriptor::operator MTL::RenderPassDescriptor *()
+{
+  MTL::RenderPassDescriptor *objc = MTL::RenderPassDescriptor::alloc()->init();
+  COPYTOOBJCARRAY(RenderPassColorAttachmentDescriptor, colorAttachments);
+  depthAttachment.CopyTo(objc->depthAttachment());
+  stencilAttachment.CopyTo(objc->stencilAttachment());
+  objc->setVisibilityResultBuffer(Unwrap(visibilityResultBuffer));
+  objc->setRenderTargetArrayLength(renderTargetArrayLength);
+  objc->setImageblockSampleLength(imageblockSampleLength);
+  objc->setThreadgroupMemoryLength(threadgroupMemoryLength);
+  objc->setTileWidth(tileWidth);
+  objc->setTileHeight(tileHeight);
+  objc->setDefaultRasterSampleCount(defaultRasterSampleCount);
+  objc->setRenderTargetWidth(renderTargetWidth);
+  objc->setRenderTargetHeight(renderTargetHeight);
+  objc->setSamplePositions(samplePositions.data(), samplePositions.count());
+  // TODO: when WrappedRasterizationRateMap exists
+  // objc->setRasterizationRateMap(Unwrap(rasterizationRateMap));
+  COPYTOOBJCARRAY(RenderPassSampleBufferAttachmentDescriptor, sampleBufferAttachments);
   return objc;
 }
 

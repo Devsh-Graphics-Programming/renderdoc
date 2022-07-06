@@ -26,6 +26,7 @@
 
 #include <QFrame>
 #include <QSemaphore>
+#include <QSet>
 #include <QStyledItemDelegate>
 #include "Code/Interface/QRDInterface.h"
 
@@ -300,7 +301,7 @@ private:
   size_t m_FirstSourceStateIdx = ~0U;
   rdcarray<ShaderDebugState> m_States;
   size_t m_CurrentStateIdx = 0;
-  rdcarray<ShaderVariable> m_Variables;
+  QList<ShaderVariable> m_Variables;
 
   // true when debugging while we're populating the initial trace. Lets us queue up commands and
   // process them once we've initialised properly
@@ -314,7 +315,8 @@ private:
 
   rdcarray<BoundResourceArray> m_ReadOnlyResources;
   rdcarray<BoundResourceArray> m_ReadWriteResources;
-  QList<int> m_Breakpoints;
+  QSet<QPair<int, uint32_t>> m_Breakpoints;
+  bool m_TempBreakpoint = false;
 
   QList<QPair<ScintillaEdit *, int>> m_FindAllResults;
 

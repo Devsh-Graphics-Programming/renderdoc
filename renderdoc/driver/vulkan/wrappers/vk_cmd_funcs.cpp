@@ -782,6 +782,16 @@ VkResult WrappedVulkan::vkResetCommandPool(VkDevice device, VkCommandPool cmdPoo
   if(Atomic::CmpExch32(&m_ReuseEnabled, 1, 1) == 1)
     GetRecord(cmdPool)->cmdPoolInfo->pool.Reset();
 
+  {
+    VkResourceRecord *poolRecord = GetRecord(cmdPool);
+    poolRecord->LockChunks();
+    for(auto it = poolRecord->pooledChildren.begin(); it != poolRecord->pooledChildren.end(); ++it)
+    {
+      (*it)->cmdInfo->alloc.Reset();
+    }
+    poolRecord->UnlockChunks();
+  }
+
   return ObjDisp(device)->ResetCommandPool(Unwrap(device), Unwrap(cmdPool), flags);
 }
 
@@ -1309,6 +1319,8 @@ VkResult WrappedVulkan::vkBeginCommandBuffer(VkCommandBuffer commandBuffer,
       RDCLOG("Begin command buffer %s baked to %s", ToStr(record->GetResourceID()).c_str(),
              ToStr(record->bakedCommands->GetResourceID()).c_str());
     }
+
+    record->DeleteChunks();
 
     {
       CACHE_THREAD_SERIALISER();
@@ -4811,6 +4823,16 @@ void WrappedVulkan::vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t
             execRecord->bakedCommands->cmdInfo->boundDescSets.end());
         record->cmdInfo->subcmds.push_back(execRecord);
 
+        if(Vulkan_Debug_VerboseCommandRecording())
+        {
+          RDCLOG("Execute command buffer %s (baked was %s) in %s (baked to %s)",
+                 ToStr(execRecord->GetResourceID()).c_str(),
+                 ToStr(execRecord->bakedCommands->GetResourceID()).c_str(),
+                 ToStr(record->GetResourceID()).c_str(),
+                 ToStr(record->bakedCommands ? record->bakedCommands->GetResourceID() : ResourceId())
+                     .c_str());
+        }
+
         ImageState::Merge(record->cmdInfo->imageStates,
                           execRecord->bakedCommands->cmdInfo->imageStates, GetImageTransitionInfo());
       }
@@ -4883,6 +4905,14 @@ void WrappedVulkan::vkCmdDebugMarkerBeginEXT(VkCommandBuffer commandBuffer,
     ser.SetActionChunk();
     SCOPED_SERIALISE_CHUNK(VulkanChunk::vkCmdDebugMarkerBeginEXT);
     Serialise_vkCmdDebugMarkerBeginEXT(ser, commandBuffer, pMarker);
+
+    if(Vulkan_Debug_VerboseCommandRecording())
+    {
+      RDCLOG(
+          "Begin marker %s in %s (baked to %s)", pMarker->pMarkerName,
+          ToStr(record->GetResourceID()).c_str(),
+          ToStr(record->bakedCommands ? record->bakedCommands->GetResourceID() : ResourceId()).c_str());
+    }
 
     record->AddChunk(scope.Get(&record->cmdInfo->alloc));
   }
@@ -5880,6 +5910,14 @@ void WrappedVulkan::vkCmdBeginDebugUtilsLabelEXT(VkCommandBuffer commandBuffer,
     ser.SetActionChunk();
     SCOPED_SERIALISE_CHUNK(VulkanChunk::vkCmdBeginDebugUtilsLabelEXT);
     Serialise_vkCmdBeginDebugUtilsLabelEXT(ser, commandBuffer, pLabelInfo);
+
+    if(Vulkan_Debug_VerboseCommandRecording())
+    {
+      RDCLOG(
+          "End marker %s in %s (baked to %s)", pLabelInfo->pLabelName,
+          ToStr(record->GetResourceID()).c_str(),
+          ToStr(record->bakedCommands ? record->bakedCommands->GetResourceID() : ResourceId()).c_str());
+    }
 
     record->AddChunk(scope.Get(&record->cmdInfo->alloc));
   }

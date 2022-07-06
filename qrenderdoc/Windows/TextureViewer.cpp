@@ -953,13 +953,6 @@ void TextureViewer::UI_UpdateStatusText()
     float g = qBound(0.0f, m_CurHoverValue.floatValue[1], 1.0f);
     float b = qBound(0.0f, m_CurHoverValue.floatValue[2], 1.0f);
 
-    if(tex.format.SRGBCorrected() || (tex.creationFlags & TextureCategory::SwapBuffer))
-    {
-      r = powf(r, 1.0f / 2.2f);
-      g = powf(g, 1.0f / 2.2f);
-      b = powf(b, 1.0f / 2.2f);
-    }
-
     swatchColor = QColor(int(255.0f * r), int(255.0f * g), int(255.0f * b));
   }
 
@@ -1815,6 +1808,7 @@ void TextureViewer::UI_UpdateChannels()
 
   INVOKE_MEMFN(RT_UpdateAndDisplay);
   INVOKE_MEMFN(RT_UpdateVisualRange);
+  UI_UpdateStatusText();
 }
 
 void TextureViewer::SetupTextureTabs()
@@ -2290,6 +2284,9 @@ void TextureViewer::AddResourceUsageEntry(QMenu &menu, uint32_t start, uint32_t 
 
   QObject::connect(item, &QAction::triggered, this, &TextureViewer::texContextItem_triggered);
   item->setProperty("eid", QVariant(end));
+
+  if(start <= m_Ctx.CurEvent() && m_Ctx.CurEvent() <= end)
+    item->setIcon(Icons::flag_green());
 
   menu.addAction(item);
 }
@@ -3789,6 +3786,30 @@ void TextureViewer::on_sliceFace_currentIndexChanged(int index)
 void TextureViewer::on_locationGoto_clicked()
 {
   ShowGotoPopup();
+}
+
+rdcpair<int32_t, int32_t> TextureViewer::GetPickedLocation()
+{
+  TextureDescription *texptr = GetCurrentTexture();
+
+  if(texptr)
+  {
+    QPoint p = m_PickedPoint;
+
+    p.setX(p.x() >> (int)m_TexDisplay.subresource.mip);
+    p.setY(p.y() >> (int)m_TexDisplay.subresource.mip);
+
+    uint32_t mipHeight = qMax(1U, texptr->height >> (int)m_TexDisplay.subresource.mip);
+
+    if(ShouldFlipForGL())
+      p.setY((int)(mipHeight - 1) - p.y());
+    if(m_TexDisplay.flipY)
+      p.setY((int)(mipHeight - 1) - p.y());
+
+    return {p.x(), p.y()};
+  }
+
+  return {-1, -1};
 }
 
 void TextureViewer::ShowGotoPopup()

@@ -557,6 +557,7 @@ private:
   D3D11ResourceRecord *m_DeviceRecord;
 
   CaptureState m_State;
+  void *m_FirstFrameCaptureWindow = NULL;
   bool m_AppControlledCapture = false;
 
   PerformanceTimer m_CaptureTimer;
@@ -697,9 +698,9 @@ public:
   bool Serialise_CaptureScope(SerialiserType &ser);
 
   RDCDriver GetFrameCaptureDriver() { return RDCDriver::D3D11; }
-  void StartFrameCapture(void *dev, void *wnd);
-  bool EndFrameCapture(void *dev, void *wnd);
-  bool DiscardFrameCapture(void *dev, void *wnd);
+  void StartFrameCapture(DeviceOwnedWindow devWnd);
+  bool EndFrameCapture(DeviceOwnedWindow devWnd);
+  bool DiscardFrameCapture(DeviceOwnedWindow devWnd);
 
   ID3DUserDefinedAnnotation *GetAnnotations() { return m_RealAnnotations; }
   ID3D11InfoQueue *GetInfoQueue() { return m_pInfoQueue; }

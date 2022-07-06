@@ -1234,6 +1234,10 @@ static const VkExtensionProperties supportedExtensions[] = {
         VK_KHR_FORMAT_FEATURE_FLAGS_2_EXTENSION_NAME, VK_KHR_FORMAT_FEATURE_FLAGS_2_SPEC_VERSION,
     },
     {
+        VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME,
+        VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_SPEC_VERSION,
+    },
+    {
         VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, VK_KHR_FRAGMENT_SHADING_RATE_SPEC_VERSION,
     },
     {
@@ -1761,7 +1765,11 @@ void WrappedVulkan::FirstFrame()
   // if we have to capture the first frame, begin capturing immediately
   if(IsBackgroundCapturing(m_State) && RenderDoc::Inst().ShouldTriggerCapture(0))
   {
-    RenderDoc::Inst().StartFrameCapture(LayerDisp(m_Instance), NULL);
+    RenderDoc::Inst().StartFrameCapture(DeviceOwnedWindow(LayerDisp(m_Instance), NULL));
+
+    RDCLOG("frame 0 cap");
+
+    m_FirstFrameCapture = true;
 
     m_AppControlledCapture = false;
     m_CapturedFrames.back().frameNumber = 0;
@@ -1785,12 +1793,20 @@ bool WrappedVulkan::Serialise_BeginCaptureFrame(SerialiserType &ser)
   return true;
 }
 
-void WrappedVulkan::StartFrameCapture(void *dev, void *wnd)
+void WrappedVulkan::StartFrameCapture(DeviceOwnedWindow devWnd)
 {
   if(!IsBackgroundCapturing(m_State))
     return;
 
   RDCLOG("Starting capture");
+
+  if(m_Queue == VK_NULL_HANDLE && m_QueueFamilyIdx != ~0U)
+  {
+    RDCLOG("Creating desired queue as none was obtained by the application");
+
+    VkQueue q = VK_NULL_HANDLE;
+    vkGetDeviceQueue(m_Device, m_QueueFamilyIdx, 0, &q);
+  }
 
   Atomic::Dec32(&m_ReuseEnabled);
 
@@ -1893,25 +1909,26 @@ void WrappedVulkan::StartFrameCapture(void *dev, void *wnd)
   }
 }
 
-bool WrappedVulkan::EndFrameCapture(void *dev, void *wnd)
+bool WrappedVulkan::EndFrameCapture(DeviceOwnedWindow devWnd)
 {
   if(!IsActiveCapturing(m_State))
     return true;
 
   VkSwapchainKHR swap = VK_NULL_HANDLE;
 
-  if(wnd)
+  if(devWnd.windowHandle)
   {
     {
       SCOPED_LOCK(m_SwapLookupLock);
-      auto it = m_SwapLookup.find(wnd);
+      auto it = m_SwapLookup.find(devWnd.windowHandle);
       if(it != m_SwapLookup.end())
         swap = it->second;
     }
 
     if(swap == VK_NULL_HANDLE)
     {
-      RDCERR("Output window %p provided for frame capture corresponds with no known swap chain", wnd);
+      RDCERR("Output window %p provided for frame capture corresponds with no known swap chain",
+             devWnd.windowHandle);
       return false;
     }
   }
@@ -2352,7 +2369,7 @@ bool WrappedVulkan::EndFrameCapture(void *dev, void *wnd)
   return true;
 }
 
-bool WrappedVulkan::DiscardFrameCapture(void *dev, void *wnd)
+bool WrappedVulkan::DiscardFrameCapture(DeviceOwnedWindow devWnd)
 {
   if(!IsActiveCapturing(m_State))
     return true;
@@ -2414,21 +2431,34 @@ void WrappedVulkan::AdvanceFrame()
   m_FrameCounter++;    // first present becomes frame #1, this function is at the end of the frame
 }
 
-void WrappedVulkan::Present(void *dev, void *wnd)
+void WrappedVulkan::Present(DeviceOwnedWindow devWnd)
 {
-  bool activeWindow = wnd == NULL || RenderDoc::Inst().IsActiveWindow(dev, wnd);
+  bool activeWindow = devWnd.windowHandle == NULL || RenderDoc::Inst().IsActiveWindow(devWnd);
 
   RenderDoc::Inst().AddActiveDriver(RDCDriver::Vulkan, true);
 
+  RDCLOG("Present() window %p", devWnd.windowHandle);
+
   if(!activeWindow)
+  {
+    RDCLOG("inactive");
+
+    // first present to *any* window, even inactive, terminates frame 0
+    if(m_FirstFrameCapture && IsActiveCapturing(m_State))
+    {
+      RenderDoc::Inst().EndFrameCapture(DeviceOwnedWindow(LayerDisp(m_Instance), NULL));
+      m_FirstFrameCapture = false;
+    }
+
     return;
+  }
 
   if(IsActiveCapturing(m_State) && !m_AppControlledCapture)
-    RenderDoc::Inst().EndFrameCapture(dev, wnd);
+    RenderDoc::Inst().EndFrameCapture(devWnd);
 
   if(RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter) && IsBackgroundCapturing(m_State))
   {
-    RenderDoc::Inst().StartFrameCapture(dev, wnd);
+    RenderDoc::Inst().StartFrameCapture(devWnd);
 
     m_AppControlledCapture = false;
     m_CapturedFrames.back().frameNumber = m_FrameCounter;
@@ -2464,11 +2494,11 @@ void WrappedVulkan::HandleFrameMarkers(const char *marker, VkQueue queue)
 
   if(strstr(marker, "capture-marker,begin_capture") != NULL)
   {
-    RenderDoc::Inst().StartFrameCapture(LayerDisp(m_Instance), NULL);
+    RenderDoc::Inst().StartFrameCapture(DeviceOwnedWindow(LayerDisp(m_Instance), NULL));
   }
   if(strstr(marker, "capture-marker,end_capture") != NULL)
   {
-    RenderDoc::Inst().EndFrameCapture(LayerDisp(m_Instance), NULL);
+    RenderDoc::Inst().EndFrameCapture(DeviceOwnedWindow(LayerDisp(m_Instance), NULL));
   }
 }
 
@@ -3732,7 +3762,9 @@ VkResourceRecord *WrappedVulkan::RegisterSurface(WindowingSystem system, void *h
 {
   Keyboard::AddInputWindow(system, handle);
 
-  RenderDoc::Inst().AddFrameCapturer(LayerDisp(m_Instance), handle, this);
+  RDCLOG("RegisterSurface() window %p", handle);
+
+  RenderDoc::Inst().AddFrameCapturer(DeviceOwnedWindow(LayerDisp(m_Instance), handle), this);
 
   return (VkResourceRecord *)new PackedWindowHandle(system, handle);
 }
@@ -4096,6 +4128,69 @@ void WrappedVulkan::AddDebugMessage(DebugMessage msg)
   {
     m_DebugMessages.push_back(msg);
   }
+}
+
+rdcstr WrappedVulkan::GetPhysDeviceCompatString(bool externalResource, bool origInvalid)
+{
+  const VkDriverInfo &capture = m_OrigPhysicalDeviceData.driverInfo;
+  const VkDriverInfo &replay = m_PhysicalDeviceData.driverInfo;
+
+  if(origInvalid)
+  {
+    return StringFormat::Fmt(
+        "This was invalid at capture time.\n"
+        "You must use API validation, as RenderDoc does not handle invalid API use like this.\n\n"
+        "Captured on device: %s %s, %u.%u.%u",
+        ToStr(capture.Vendor()).c_str(), m_OrigPhysicalDeviceData.props.deviceName, capture.Major(),
+        capture.Minor(), capture.Patch());
+  }
+
+  rdcstr ret;
+
+  if(externalResource)
+  {
+    ret =
+        "This resource was externally imported, which cannot happen at replay time.\n"
+        "Some drivers do not allow externally-imported resources to be bound to non-external "
+        "memory, meaning that captures using resources like this can't be replayed.\n\n";
+  }
+
+  if(capture == replay)
+  {
+    ret += StringFormat::Fmt("Captured and replayed on the same device: %s %s, %u.%u.%u",
+                             ToStr(capture.Vendor()).c_str(),
+                             m_OrigPhysicalDeviceData.props.deviceName, capture.Major(),
+                             capture.Minor(), capture.Patch());
+  }
+  else
+  {
+    ret += StringFormat::Fmt(
+        "Capture was made on: %s %s, %u.%u.%u\n"
+        "Replayed on: %s %s, %u.%u.%u\n",
+
+        // capture device
+        ToStr(capture.Vendor()).c_str(), m_OrigPhysicalDeviceData.props.deviceName, capture.Major(),
+        capture.Minor(), capture.Patch(),
+
+        // replay device
+        ToStr(replay.Vendor()).c_str(), m_PhysicalDeviceData.props.deviceName, replay.Major(),
+        replay.Minor(), replay.Patch());
+
+    if(capture.Vendor() != replay.Vendor())
+    {
+      ret += "Captures are not commonly portable between GPUs from different vendors.";
+    }
+    else if(strcmp(m_OrigPhysicalDeviceData.props.deviceName, m_PhysicalDeviceData.props.deviceName))
+    {
+      ret += "Captures are sometimes not portable between different GPUs from a vendor.";
+    }
+    else
+    {
+      ret += "Driver changes can sometimes cause captures to no longer work.";
+    }
+  }
+
+  return ret;
 }
 
 void WrappedVulkan::CheckErrorVkResult(VkResult vkr)

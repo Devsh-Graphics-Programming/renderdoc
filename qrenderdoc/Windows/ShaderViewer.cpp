@@ -838,35 +838,52 @@ void ShaderViewer::debugShader(const ShaderBindpointMapping *bind, const ShaderR
       if(!me)
         return;
 
-      rdcarray<ShaderDebugState> states = r->ContinueDebug(m_Trace->debugger);
+      rdcarray<ShaderDebugState> *states = new rdcarray<ShaderDebugState>();
+
+      states->append(r->ContinueDebug(m_Trace->debugger));
+
+      rdcarray<ShaderDebugState> nextStates;
 
       bool finished = false;
       do
       {
         if(!me)
+        {
+          delete states;
           return;
+        }
 
-        rdcarray<ShaderDebugState> nextStates = r->ContinueDebug(m_Trace->debugger);
+        nextStates = r->ContinueDebug(m_Trace->debugger);
 
         if(!me)
+        {
+          delete states;
           return;
+        }
 
-        states.append(nextStates);
         finished = nextStates.empty();
+        states->append(std::move(nextStates));
       } while(!finished && m_BackgroundRunning.available() == 1);
 
       if(!me)
+      {
+        delete states;
         return;
+      }
 
       m_BackgroundRunning.tryAcquire(1);
 
       r->SetFrameEvent(m_Ctx.CurEvent(), true);
 
       if(!me)
+      {
+        delete states;
         return;
+      }
 
       GUIInvoke::call(this, [this, states]() {
-        m_States = states;
+        m_States.swap(*states);
+        delete states;
 
         if(!m_States.empty())
         {
@@ -2008,8 +2025,11 @@ bool ShaderViewer::step(bool forward, StepMode mode)
       else
         applyBackwardsChange();
 
+      LineColumnInfo curLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
+
       // break out if we hit a breakpoint, no matter what
-      if(m_Breakpoints.contains((int)GetCurrentState().nextInstruction))
+      if(m_Breakpoints.contains({-1, curLine.disassemblyLine}) ||
+         m_Breakpoints.contains({curLine.fileIndex, curLine.lineStart}))
         break;
 
       // if we've reached the limit, break
@@ -2021,7 +2041,6 @@ bool ShaderViewer::step(bool forward, StepMode mode)
         break;
 
       // keep going if we're still on the same source line as we started
-      LineColumnInfo curLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
       if(curLine.SourceEqual(oldLine))
         continue;
 
@@ -2121,8 +2140,10 @@ bool ShaderViewer::step(bool forward, StepMode mode)
 
           applyBackwardsChange();
 
+          LineColumnInfo curLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
+
           // still need to check for instruction-level breakpoints
-          if(m_Breakpoints.contains((int)GetCurrentState().nextInstruction))
+          if(m_Breakpoints.contains({-1, curLine.disassemblyLine}))
             break;
         }
       }
@@ -2133,8 +2154,10 @@ bool ShaderViewer::step(bool forward, StepMode mode)
         {
           applyBackwardsChange();
 
+          LineColumnInfo curLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
+
           // still need to check for instruction-level breakpoints
-          if(m_Breakpoints.contains((int)GetCurrentState().nextInstruction))
+          if(m_Breakpoints.contains({-1, curLine.disassemblyLine}))
             break;
         }
       }
@@ -2162,52 +2185,21 @@ void ShaderViewer::runToCursor(bool forward)
   if(!m_Trace || m_States.empty())
     return;
 
-  ScintillaEdit *cur = currentScintilla();
+  // don't update the UI or remove any breakpoints
+  m_TempBreakpoint = true;
+  QSet<QPair<int, uint32_t>> oldBPs = m_Breakpoints;
 
-  if(cur != m_DisassemblyView)
-  {
-    int scintillaIndex = m_FileScintillas.indexOf(cur);
+  // add a temporary breakpoint on the current instruction
+  ToggleBreakpointOnInstruction(-1);
 
-    if(scintillaIndex < 0)
-      return;
+  // run in the direction
+  runTo(~0U, forward);
 
-    sptr_t i = cur->lineFromPosition(cur->currentPos()) + 1;
-
-    LineColumnInfo sourceLine;
-    sourceLine.fileIndex = scintillaIndex;
-    sourceLine.lineStart = sourceLine.lineEnd = i;
-
-    auto it = m_Location2Inst.lowerBound(sourceLine);
-
-    // find the next source location that has an instruction mapped. If there was an exact match
-    // this won't loop, if the lower bound was earlier we'll step at most once to get to the next
-    // line past it.
-    if(it != m_Location2Inst.end() && (sptr_t)it.key().lineEnd < i)
-      it++;
-
-    if(it != m_Location2Inst.end())
-    {
-      runTo(it.value(), forward, ShaderEvents::NoEvent);
-      return;
-    }
-
-    // if we didn't find one, just run
-    runTo(~0U, forward);
-  }
-  else
-  {
-    sptr_t i = m_DisassemblyView->lineFromPosition(m_DisassemblyView->currentPos());
-
-    for(; i < m_DisassemblyView->lineCount(); i++)
-    {
-      int line = instructionForDisassemblyLine(i);
-      if(line >= 0)
-      {
-        runTo((uint32_t)line, forward);
-        break;
-      }
-    }
-  }
+  // turn off temp breakpoint state
+  m_TempBreakpoint = false;
+  // restore the set of breakpoints to what it was (this handles the case of doing 'run to cursor'
+  // on a line that already has a breakpoint)
+  m_Breakpoints = oldBPs;
 }
 
 int ShaderViewer::instructionForDisassemblyLine(sptr_t line)
@@ -2268,6 +2260,7 @@ void ShaderViewer::runTo(const rdcarray<uint32_t> &runToInstructions, bool forwa
     return;
 
   bool firstStep = true;
+  LineColumnInfo oldLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
 
   // this is effectively infinite as we break out before moving to next/previous state if that would
   // be first/last
@@ -2282,10 +2275,20 @@ void ShaderViewer::runTo(const rdcarray<uint32_t> &runToInstructions, bool forwa
       break;
 
     // or breakpoint
-    if(!firstStep && m_Breakpoints.contains((int)GetCurrentState().nextInstruction))
+    LineColumnInfo curLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
+    if(!firstStep && (m_Breakpoints.contains({-1, curLine.disassemblyLine}) ||
+                      m_Breakpoints.contains({curLine.fileIndex, curLine.lineStart})))
       break;
 
-    firstStep = false;
+    if(isSourceDebugging())
+    {
+      if(!curLine.SourceEqual(oldLine))
+        firstStep = false;
+    }
+    else
+    {
+      firstStep = false;
+    }
 
     if(forward)
     {
@@ -2344,7 +2347,9 @@ void ShaderViewer::runToResourceAccess(bool forward, VarType type, const Bindpoi
       break;
 
     // or breakpoint
-    if(m_Breakpoints.contains((int)GetCurrentState().nextInstruction))
+    LineColumnInfo curLine = m_Trace->lineInfo[GetCurrentState().nextInstruction];
+    if(m_Breakpoints.contains({-1, curLine.disassemblyLine}) ||
+       m_Breakpoints.contains({curLine.fileIndex, curLine.lineStart}))
       break;
   }
 
@@ -2353,114 +2358,108 @@ void ShaderViewer::runToResourceAccess(bool forward, VarType type, const Bindpoi
 
 void ShaderViewer::applyBackwardsChange()
 {
-  if(!IsFirstState())
+  if(IsFirstState())
+    return;
+
+  for(const ShaderVariableChange &c : GetCurrentState().changes)
   {
-    rdcarray<ShaderVariable> newVariables;
-
-    for(const ShaderVariableChange &c : GetCurrentState().changes)
+    // if the before name is empty, this is a variable that came into scope/was created
+    if(c.before.name.empty())
     {
-      // if the before name is empty, this is a variable that came into scope/was created
-      if(c.before.name.empty())
+      // delete the matching variable (should only be one)
+      for(int i = 0; i < m_Variables.count(); i++)
       {
-        // delete the matching variable (should only be one)
-        for(size_t i = 0; i < m_Variables.size(); i++)
+        if(c.after.name == m_Variables[i].name)
         {
-          if(c.after.name == m_Variables[i].name)
-          {
-            m_Variables.erase(i);
-            break;
-          }
+          m_Variables.removeAt(i);
+          break;
         }
-      }
-      else
-      {
-        ShaderVariable *v = NULL;
-        for(size_t i = 0; i < m_Variables.size(); i++)
-        {
-          if(c.before.name == m_Variables[i].name)
-          {
-            v = &m_Variables[i];
-            break;
-          }
-        }
-
-        if(v)
-          *v = c.before;
-        else
-          newVariables.push_back(c.before);
       }
     }
+    else
+    {
+      ShaderVariable *v = NULL;
+      for(int i = 0; i < m_Variables.count(); i++)
+      {
+        if(c.before.name == m_Variables[i].name)
+        {
+          v = &m_Variables[i];
+          break;
+        }
+      }
 
-    m_Variables.insert(0, newVariables);
-
-    m_CurrentStateIdx--;
+      if(v)
+        *v = c.before;
+      else
+        m_Variables.insert(0, c.before);
+    }
   }
+
+  m_CurrentStateIdx--;
 }
 
 void ShaderViewer::applyForwardsChange()
 {
-  if(!IsLastState())
+  if(IsLastState())
+    return;
+
+  m_CurrentStateIdx++;
+
+  rdcarray<AccessedResourceData> newAccessedResources;
+
+  for(const ShaderVariableChange &c : GetCurrentState().changes)
   {
-    m_CurrentStateIdx++;
-
-    rdcarray<ShaderVariable> newVariables;
-    rdcarray<AccessedResourceData> newAccessedResources;
-
-    for(const ShaderVariableChange &c : GetCurrentState().changes)
+    // if the after name is empty, this is a variable going out of scope/being deleted
+    if(c.after.name.empty())
     {
-      // if the after name is empty, this is a variable going out of scope/being deleted
-      if(c.after.name.empty())
+      // delete the matching variable (should only be one)
+      for(int i = 0; i < m_Variables.count(); i++)
       {
-        // delete the matching variable (should only be one)
-        for(size_t i = 0; i < m_Variables.size(); i++)
+        if(c.before.name == m_Variables[i].name)
         {
-          if(c.before.name == m_Variables[i].name)
-          {
-            m_Variables.erase(i);
-            break;
-          }
-        }
-      }
-      else
-      {
-        ShaderVariable *v = NULL;
-        for(size_t i = 0; i < m_Variables.size(); i++)
-        {
-          if(c.after.name == m_Variables[i].name)
-          {
-            v = &m_Variables[i];
-            break;
-          }
-        }
-
-        if(v)
-          *v = c.after;
-        else
-          newVariables.push_back(c.after);
-
-        if(c.after.type == VarType::ReadOnlyResource || c.after.type == VarType::ReadWriteResource)
-        {
-          bool found = false;
-          for(size_t i = 0; i < m_AccessedResources.size(); i++)
-          {
-            if(c.after.GetBinding() == m_AccessedResources[i].resource.GetBinding())
-            {
-              found = true;
-              if(m_AccessedResources[i].steps.indexOf(m_CurrentStateIdx) < 0)
-                m_AccessedResources[i].steps.push_back(m_CurrentStateIdx);
-              break;
-            }
-          }
-
-          if(!found)
-            newAccessedResources.push_back({c.after, {m_CurrentStateIdx}});
+          m_Variables.removeAt(i);
+          break;
         }
       }
     }
+    else
+    {
+      ShaderVariable *v = NULL;
+      for(int i = 0; i < m_Variables.count(); i++)
+      {
+        if(c.after.name == m_Variables[i].name)
+        {
+          v = &m_Variables[i];
+          break;
+        }
+      }
 
-    m_Variables.insert(0, newVariables);
-    m_AccessedResources.insert(0, newAccessedResources);
+      if(v)
+        *v = c.after;
+      else
+        m_Variables.insert(0, c.after);
+
+      if(c.after.type == VarType::ReadOnlyResource || c.after.type == VarType::ReadWriteResource)
+      {
+        bool found = false;
+        for(size_t i = 0; i < m_AccessedResources.size(); i++)
+        {
+          if(c.after.GetBinding() == m_AccessedResources[i].resource.GetBinding())
+          {
+            found = true;
+            if(m_AccessedResources[i].steps.indexOf(m_CurrentStateIdx) < 0)
+              m_AccessedResources[i].steps.push_back(m_CurrentStateIdx);
+            break;
+          }
+        }
+
+        if(!found)
+          newAccessedResources.push_back({c.after, {m_CurrentStateIdx}});
+      }
+    }
   }
+
+  m_AccessedResources.insert(0, newAccessedResources);
 }
 
 QString ShaderViewer::stringRep(const ShaderVariable &var, uint32_t row)
@@ -3248,7 +3247,10 @@ const RDTreeWidgetItem *ShaderViewer::getVarFromPath(const rdcstr &path, ShaderV
 
             if(child->text(0) == root)
             {
-              const RDTreeWidgetItem *ret = getVarFromPath(path, child, var, swizzle);
+              VariableTag tag = item->tag().value<VariableTag>();
+
+              const RDTreeWidgetItem *ret =
+                  getVarFromPath(tag.absoluteRefPath + "." + path, child, var, swizzle);
               if(ret)
                 return ret;
             }
@@ -4774,6 +4776,66 @@ RDTreeWidgetItem *ShaderViewer::makeAccessedResourceNode(const ShaderVariable &v
   return node;
 }
 
+// this function is a bit messy, we want a base recursion container of either QList or rdcarray
+// but further recursion is always rdcarray because of ShaderVariable::members
+template <typename Container>
+const ShaderVariable *GetShaderDebugVariable(rdcstr path, const Container &vars)
+{
+  rdcstr elem;
+
+  // pick out the next element in the path
+  // if this is an array index, grab that
+  if(path[0] == '[')
+  {
+    int idx = path.indexOf(']');
+    if(idx < 0)
+      return NULL;
+    elem = path.substr(0, idx + 1);
+
+    // skip past any .s
+    if(path[idx + 1] == '.')
+      idx++;
+
+    path = path.substr(idx + 1);
+  }
+  else
+  {
+    // otherwise look for the next identifier
+    int idx = path.find_first_of("[.");
+    if(idx < 0)
+    {
+      // no results means that all that's left of the path is an identifier
+      elem.swap(path);
+    }
+    else
+    {
+      elem = path.substr(0, idx);
+
+      // skip past any .s
+      if(path[idx] == '.')
+        idx++;
+
+      path = path.substr(idx);
+    }
+  }
+
+  // look in our current set of vars for a matching variable
+  for(int i = 0; i < vars.count(); i++)
+  {
+    if(vars[i].name == elem)
+    {
+      // If there's no more path, we've found the exact match, otherwise continue
+      if(path.empty())
+        return &vars[i];
+
+      // otherwise recurse
+      return GetShaderDebugVariable(path, vars[i].members);
+    }
+  }
+
+  return NULL;
+}
+
 const ShaderVariable *ShaderViewer::GetDebugVariable(const DebugVariableReference &r)
 {
   if(r.type == DebugVariableType::ReadOnlyResource)
@@ -4800,80 +4862,17 @@ const ShaderVariable *ShaderViewer::GetDebugVariable(const DebugVariableReferenc
 
     return NULL;
   }
-  else if(r.type == DebugVariableType::Input || r.type == DebugVariableType::Constant ||
-          r.type == DebugVariableType::Variable)
+  else if(r.type == DebugVariableType::Input)
   {
-    rdcarray<ShaderVariable> *vars =
-        r.type == DebugVariableType::Input
-            ? &m_Trace->inputs
-            : (r.type == DebugVariableType::Constant ? &m_Trace->constantBlocks : &m_Variables);
-
-    rdcstr path = r.name;
-
-    while(!path.empty())
-    {
-      rdcstr elem;
-
-      // pick out the next element in the path
-      // if this is an array index, grab that
-      if(path[0] == '[')
-      {
-        int idx = path.indexOf(']');
-        if(idx < 0)
-          break;
-        elem = path.substr(0, idx + 1);
-
-        // skip past any .s
-        if(path[idx + 1] == '.')
-          idx++;
-
-        path = path.substr(idx + 1);
-      }
-      else
-      {
-        // otherwise look for the next identifier
-        int idx = path.find_first_of("[.");
-        if(idx < 0)
-        {
-          // no results means that all that's left of the path is an identifier
-          elem.swap(path);
-        }
-        else
-        {
-          elem = path.substr(0, idx);
-
-          // skip past any .s
-          if(path[idx] == '.')
-            idx++;
-
-          path = path.substr(idx);
-        }
-      }
-
-      // look in our current set of vars for a matching variable
-      bool found = false;
-      for(size_t i = 0; i < vars->size(); i++)
-      {
-        if(vars->at(i).name == elem)
-        {
-          // found the match.
-          found = true;
-
-          // If there's no more path, we've found the exact match, otherwise continue
-          if(path.empty())
-            return &vars->at(i);
-
-          vars = &vars->at(i).members;
-
-          break;
-        }
-      }
-
-      if(!found)
-        break;
-    }
-
-    return NULL;
+    return GetShaderDebugVariable(r.name, m_Trace->inputs);
+  }
+  else if(r.type == DebugVariableType::Constant)
+  {
+    return GetShaderDebugVariable(r.name, m_Trace->constantBlocks);
+  }
+  else if(r.type == DebugVariableType::Variable)
+  {
+    return GetShaderDebugVariable(r.name, m_Variables);
   }
 
   return NULL;
@@ -4933,9 +4932,16 @@ void ShaderViewer::ToggleBreakpointOnInstruction(int32_t instruction)
   if(!m_Trace || m_States.empty())
     return;
 
-  sptr_t instLine = -1;
+  QPair<int, uint32_t> sourceBreakpoint = {-1, 0};
+  QList<QPair<int, uint32_t>> disasmBreakpoints;
 
-  if(instruction == -1)
+  if(instruction >= 0)
+  {
+    LineColumnInfo &instLine = m_Trace->lineInfo[instruction];
+    sourceBreakpoint = {instLine.fileIndex, instLine.lineStart};
+    disasmBreakpoints.push_back({-1, instLine.disassemblyLine});
+  }
+  else
   {
     ScintillaEdit *cur = currentScintilla();
 
@@ -4954,27 +4960,6 @@ void ShaderViewer::ToggleBreakpointOnInstruction(int32_t instruction)
       sourceLine.fileIndex = scintillaIndex;
       sourceLine.lineStart = sourceLine.lineEnd = i;
 
-      // first see if any of the existing breakpoints map to this source location. They may come
-      // from a different 'non-canonical' instruction which is still on the same line. If the user
-      // is toggling on that source location, they expect to disable the breakpoint on that
-      // instruction even if it's not the instruction where a breakpoint will be *added* if they add
-      // one there.
-      bool exactMatch = false;
-      QList<int> bps = m_Breakpoints;
-      for(int inst : bps)
-      {
-        LineColumnInfo instSourceLine = m_Trace->lineInfo[inst];
-        // ignore columns
-        instSourceLine.colStart = instSourceLine.colEnd = 0;
-        if(instSourceLine.SourceEqual(sourceLine))
-        {
-          ToggleBreakpointOnInstruction(inst);
-          exactMatch = true;
-        }
-      }
-      if(exactMatch)
-        return;
-
       auto it = m_Location2Inst.lowerBound(sourceLine);
 
       // find the next source location that has an instruction mapped. If there was an exact match
@@ -4986,88 +4971,128 @@ void ShaderViewer::ToggleBreakpointOnInstruction(int32_t instruction)
       // set a breakpoint on all instructions that match this line
       if(it != m_Location2Inst.end())
       {
+        sourceBreakpoint = {scintillaIndex, (uint32_t)i};
         for(uint32_t inst : it.value())
-          ToggleBreakpointOnInstruction((int)inst);
+          disasmBreakpoints.push_back({-1, m_Trace->lineInfo[inst].disassemblyLine});
+      }
+      else
+      {
         return;
       }
     }
     else
     {
-      instLine = m_DisassemblyView->lineFromPosition(m_DisassemblyView->currentPos());
+      int32_t disassemblyLine = m_DisassemblyView->lineFromPosition(m_DisassemblyView->currentPos());
 
-      for(; instLine < m_DisassemblyView->lineCount(); instLine++)
+      for(; disassemblyLine < m_DisassemblyView->lineCount(); disassemblyLine++)
       {
-        instruction = instructionForDisassemblyLine(instLine);
-
-        if(instruction >= 0)
+        if(instructionForDisassemblyLine(disassemblyLine) >= 0)
           break;
       }
+
+      if(disassemblyLine < m_DisassemblyView->lineCount())
+        disasmBreakpoints.push_back({-1, (uint32_t)disassemblyLine + 1});
     }
   }
 
-  if(instruction < 0 || instruction >= m_Trace->lineInfo.count())
-    return;
-
-  if(instLine == -1)
+  // if we have a source breakpoint, treat that as 'canonical' whether or not the corresponding
+  // disasm ones are set
+  if(sourceBreakpoint.first >= 0)
   {
-    if(instruction < m_Trace->lineInfo.count())
-      instLine = m_Trace->lineInfo[instruction].disassemblyLine - 1;
-  }
-
-  if(m_Breakpoints.contains(instruction))
-  {
-    if(instLine >= 0)
+    if(m_TempBreakpoint)
     {
-      m_DisassemblyView->markerDelete(instLine, BREAKPOINT_MARKER);
-      m_DisassemblyView->markerDelete(instLine, BREAKPOINT_MARKER + 1);
+      m_Breakpoints.insert(sourceBreakpoint);
+      for(QPair<int, uint32_t> &d : disasmBreakpoints)
+        m_Breakpoints.insert(d);
+    }
+    else if(m_Breakpoints.contains(sourceBreakpoint))
+    {
+      m_Breakpoints.remove(sourceBreakpoint);
+      m_FileScintillas[sourceBreakpoint.first]->markerDelete(sourceBreakpoint.second - 1,
+                                                             BREAKPOINT_MARKER);
+      m_FileScintillas[sourceBreakpoint.first]->markerDelete(sourceBreakpoint.second - 1,
+                                                             BREAKPOINT_MARKER + 1);
 
-      const LineColumnInfo &lineInfo = m_Trace->lineInfo[instruction];
-
-      if(lineInfo.fileIndex >= 0 && lineInfo.fileIndex < m_FileScintillas.count())
+      for(QPair<int, uint32_t> &d : disasmBreakpoints)
       {
-        for(sptr_t line = lineInfo.lineStart; line <= (sptr_t)lineInfo.lineEnd; line++)
-        {
-          ScintillaEdit *s = m_FileScintillas[lineInfo.fileIndex];
-          if(s)
-          {
-            m_FileScintillas[lineInfo.fileIndex]->markerDelete(line - 1, BREAKPOINT_MARKER);
-            m_FileScintillas[lineInfo.fileIndex]->markerDelete(line - 1, BREAKPOINT_MARKER + 1);
-          }
-        }
+        m_Breakpoints.remove(d);
+        m_DisassemblyView->markerDelete(d.second - 1, BREAKPOINT_MARKER);
+        m_DisassemblyView->markerDelete(d.second - 1, BREAKPOINT_MARKER + 1);
       }
     }
-    m_Breakpoints.removeOne(instruction);
+    else
+    {
+      m_Breakpoints.insert(sourceBreakpoint);
+      m_FileScintillas[sourceBreakpoint.first]->markerAdd(sourceBreakpoint.second - 1,
+                                                          BREAKPOINT_MARKER);
+      m_FileScintillas[sourceBreakpoint.first]->markerAdd(sourceBreakpoint.second - 1,
+                                                          BREAKPOINT_MARKER + 1);
+
+      for(QPair<int, uint32_t> &d : disasmBreakpoints)
+      {
+        m_Breakpoints.insert(d);
+        m_DisassemblyView->markerAdd(d.second - 1, BREAKPOINT_MARKER);
+        m_DisassemblyView->markerAdd(d.second - 1, BREAKPOINT_MARKER + 1);
+      }
+    }
   }
   else
   {
-    if(instLine >= 0)
+    if(disasmBreakpoints.empty())
+      return;
+
+    QPair<int, uint32_t> &bp = disasmBreakpoints[0];
+
+    if(m_TempBreakpoint)
     {
-      m_DisassemblyView->markerAdd(instLine, BREAKPOINT_MARKER);
-      m_DisassemblyView->markerAdd(instLine, BREAKPOINT_MARKER + 1);
-
-      const LineColumnInfo &lineInfo = m_Trace->lineInfo[instruction];
-
-      if(lineInfo.fileIndex >= 0 && lineInfo.fileIndex < m_FileScintillas.count())
-      {
-        for(sptr_t line = lineInfo.lineStart; line <= (sptr_t)lineInfo.lineEnd; line++)
-        {
-          ScintillaEdit *s = m_FileScintillas[lineInfo.fileIndex];
-          if(s)
-          {
-            m_FileScintillas[lineInfo.fileIndex]->markerAdd(line - 1, BREAKPOINT_MARKER);
-            m_FileScintillas[lineInfo.fileIndex]->markerAdd(line - 1, BREAKPOINT_MARKER + 1);
-          }
-        }
-      }
-      m_Breakpoints.push_back(instruction);
+      m_Breakpoints.insert(bp);
+    }
+    else if(m_Breakpoints.contains(bp))
+    {
+      m_Breakpoints.remove(bp);
+      m_DisassemblyView->markerDelete(bp.second - 1, BREAKPOINT_MARKER);
+      m_DisassemblyView->markerDelete(bp.second - 1, BREAKPOINT_MARKER + 1);
+    }
+    else
+    {
+      m_Breakpoints.insert(bp);
+      m_DisassemblyView->markerAdd(bp.second - 1, BREAKPOINT_MARKER);
+      m_DisassemblyView->markerAdd(bp.second - 1, BREAKPOINT_MARKER + 1);
     }
   }
 }
 
 void ShaderViewer::ToggleBreakpointOnDisassemblyLine(int32_t disassemblyLine)
 {
-  // instructionForDisassemblyLine expects scintilla 0-based line numbers
-  ToggleBreakpointOnInstruction(instructionForDisassemblyLine(disassemblyLine - 1));
+  if(!m_Trace || m_States.empty())
+    return;
+
+  // move forward to the next actual mapped line
+  for(; disassemblyLine < m_DisassemblyView->lineCount(); disassemblyLine++)
+  {
+    if(instructionForDisassemblyLine(disassemblyLine - 1) >= 0)
+      break;
+  }
+
+  if(disassemblyLine >= m_DisassemblyView->lineCount())
+    return;
+
+  if(m_TempBreakpoint)
+  {
+    m_Breakpoints.insert({-1, (uint32_t)disassemblyLine});
+  }
+  else if(m_Breakpoints.contains({-1, (uint32_t)disassemblyLine}))
+  {
+    m_Breakpoints.remove({-1, (uint32_t)disassemblyLine});
+    m_DisassemblyView->markerDelete(disassemblyLine - 1, BREAKPOINT_MARKER);
+    m_DisassemblyView->markerDelete(disassemblyLine - 1, BREAKPOINT_MARKER + 1);
+  }
+  else
+  {
+    m_Breakpoints.insert({-1, (uint32_t)disassemblyLine});
+    m_DisassemblyView->markerAdd(disassemblyLine - 1, BREAKPOINT_MARKER);
+    m_DisassemblyView->markerAdd(disassemblyLine - 1, BREAKPOINT_MARKER + 1);
+  }
 }
 
 void ShaderViewer::RunForward()
@@ -5504,7 +5529,7 @@ void ShaderViewer::disasm_tooltipHide(int x, int y)
 
 void ShaderViewer::showVariableTooltip(QString name)
 {
-  m_TooltipVarPath = name;
+  m_TooltipVarPath = name.replace(QRegularExpression(lit("\\s+")), QString());
   m_TooltipPos = QCursor::pos();
 
   updateVariableTooltip();

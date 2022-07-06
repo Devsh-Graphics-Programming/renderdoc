@@ -120,6 +120,149 @@ enum class MetalChunk : uint32_t
   MTLRenderPipelineState_newVisibleFunctionTableWithDescriptor,
   MTLRenderPipelineState_newIntersectionFunctionTableWithDescriptor,
   MTLRenderPipelineState_newRenderPipelineStateWithAdditionalBinaryFunctions,
+  MTLRenderCommandEncoder_endEncoding,
+  MTLRenderCommandEncoder_insertDebugSignpost,
+  MTLRenderCommandEncoder_pushDebugGroup,
+  MTLRenderCommandEncoder_popDebugGroup,
+  MTLRenderCommandEncoder_setRenderPipelineState,
+  MTLRenderCommandEncoder_setVertexBytes,
+  MTLRenderCommandEncoder_setVertexBuffer,
+  MTLRenderCommandEncoder_setVertexBufferOffset,
+  MTLRenderCommandEncoder_setVertexBuffers,
+  MTLRenderCommandEncoder_setVertexTexture,
+  MTLRenderCommandEncoder_setVertexTextures,
+  MTLRenderCommandEncoder_setVertexSamplerState,
+  MTLRenderCommandEncoder_setVertexSamplerState_lodclamp,
+  MTLRenderCommandEncoder_setVertexSamplerStates,
+  MTLRenderCommandEncoder_setVertexSamplerStates_lodclamp,
+  MTLRenderCommandEncoder_setVertexVisibleFunctionTable,
+  MTLRenderCommandEncoder_setVertexVisibleFunctionTables,
+  MTLRenderCommandEncoder_setVertexIntersectionFunctionTable,
+  MTLRenderCommandEncoder_setVertexIntersectionFunctionTables,
+  MTLRenderCommandEncoder_setVertexAccelerationStructure,
+  MTLRenderCommandEncoder_setViewport,
+  MTLRenderCommandEncoder_setViewports,
+  MTLRenderCommandEncoder_setFrontFacingWinding,
+  MTLRenderCommandEncoder_setVertexAmplificationCount,
+  MTLRenderCommandEncoder_setCullMode,
+  MTLRenderCommandEncoder_setDepthClipMode,
+  MTLRenderCommandEncoder_setDepthBias,
+  MTLRenderCommandEncoder_setScissorRect,
+  MTLRenderCommandEncoder_setScissorRects,
+  MTLRenderCommandEncoder_setTriangleFillMode,
+  MTLRenderCommandEncoder_setFragmentBytes,
+  MTLRenderCommandEncoder_setFragmentBuffer,
+  MTLRenderCommandEncoder_setFragmentBufferOffset,
+  MTLRenderCommandEncoder_setFragmentBuffers,
+  MTLRenderCommandEncoder_setFragmentTexture,
+  MTLRenderCommandEncoder_setFragmentTextures,
+  MTLRenderCommandEncoder_setFragmentSamplerState,
+  MTLRenderCommandEncoder_setFragmentSamplerState_lodclamp,
+  MTLRenderCommandEncoder_setFragmentSamplerStates,
+  MTLRenderCommandEncoder_setFragmentSamplerStates_lodclamp,
+  MTLRenderCommandEncoder_setFragmentVisibleFunctionTable,
+  MTLRenderCommandEncoder_setFragmentVisibleFunctionTables,
+  MTLRenderCommandEncoder_setFragmentIntersectionFunctionTable,
+  MTLRenderCommandEncoder_setFragmentIntersectionFunctionTables,
+  MTLRenderCommandEncoder_setFragmentAccelerationStructure,
+  MTLRenderCommandEncoder_setBlendColor,
+  MTLRenderCommandEncoder_setDepthStencilState,
+  MTLRenderCommandEncoder_setStencilReferenceValue,
+  MTLRenderCommandEncoder_setStencilFrontReferenceValue,
+  MTLRenderCommandEncoder_setVisibilityResultMode,
+  MTLRenderCommandEncoder_setColorStoreAction,
+  MTLRenderCommandEncoder_setDepthStoreAction,
+  MTLRenderCommandEncoder_setStencilStoreAction,
+  MTLRenderCommandEncoder_setColorStoreActionOptions,
+  MTLRenderCommandEncoder_setDepthStoreActionOptions,
+  MTLRenderCommandEncoder_setStencilStoreActionOptions,
+  MTLRenderCommandEncoder_drawPrimitives,
+  MTLRenderCommandEncoder_drawPrimitives_instanced,
+  MTLRenderCommandEncoder_drawPrimitives_instanced_base,
+  MTLRenderCommandEncoder_drawPrimitives_indirect,
+  MTLRenderCommandEncoder_drawIndexedPrimitives,
+  MTLRenderCommandEncoder_drawIndexedPrimitives_instanced,
+  MTLRenderCommandEncoder_drawIndexedPrimitives_instanced_base,
+  MTLRenderCommandEncoder_drawIndexedPrimitives_indirect,
+  MTLRenderCommandEncoder_textureBarrier,
+  MTLRenderCommandEncoder_updateFence,
+  MTLRenderCommandEncoder_waitForFence,
+  MTLRenderCommandEncoder_setTessellationFactorBuffer,
+  MTLRenderCommandEncoder_setTessellationFactorScale,
+  MTLRenderCommandEncoder_drawPatches,
+  MTLRenderCommandEncoder_drawPatches_indirect,
+  MTLRenderCommandEncoder_drawIndexedPatches,
+  MTLRenderCommandEncoder_drawIndexedPatches_indirect,
+  MTLRenderCommandEncoder_setTileBytes,
+  MTLRenderCommandEncoder_setTileBuffer,
+  MTLRenderCommandEncoder_setTileBufferOffset,
+  MTLRenderCommandEncoder_setTileBuffers,
+  MTLRenderCommandEncoder_setTileTexture,
+  MTLRenderCommandEncoder_setTileTextures,
+  MTLRenderCommandEncoder_setTileSamplerState,
+  MTLRenderCommandEncoder_setTileSamplerState_lodclamp,
+  MTLRenderCommandEncoder_setTileSamplerStates,
+  MTLRenderCommandEncoder_setTileSamplerStates_lodclamp,
+  MTLRenderCommandEncoder_setTileVisibleFunctionTable,
+  MTLRenderCommandEncoder_setTileVisibleFunctionTables,
+  MTLRenderCommandEncoder_setTileIntersectionFunctionTable,
+  MTLRenderCommandEncoder_setTileIntersectionFunctionTables,
+  MTLRenderCommandEncoder_setTileAccelerationStructure,
+  MTLRenderCommandEncoder_dispatchThreadsPerTile,
+  MTLRenderCommandEncoder_setThreadgroupMemoryLength,
+  MTLRenderCommandEncoder_useResource,
+  MTLRenderCommandEncoder_useResource_stages,
+  MTLRenderCommandEncoder_useResources,
+  MTLRenderCommandEncoder_useResources_stages,
+  MTLRenderCommandEncoder_useHeap,
+  MTLRenderCommandEncoder_useHeap_stages,
+  MTLRenderCommandEncoder_useHeaps,
+  MTLRenderCommandEncoder_useHeaps_stages,
+  MTLRenderCommandEncoder_executeCommandsInBuffer,
+  MTLRenderCommandEncoder_executeCommandsInBuffer_indirect,
+  MTLRenderCommandEncoder_memoryBarrierWithScope,
+  MTLRenderCommandEncoder_memoryBarrierWithResources,
+  MTLRenderCommandEncoder_sampleCountersInBuffer,
+  MTLBuffer_setPurgeableState,
+  MTLBuffer_makeAliasable,
+  MTLBuffer_contents,
+  MTLBuffer_didModifyRange,
+  MTLBuffer_newTextureWithDescriptor,
+  MTLBuffer_addDebugMarker,
+  MTLBuffer_removeAllDebugMarkers,
+  MTLBuffer_remoteStorageBuffer,
+  MTLBuffer_newRemoteBufferViewForDevice,
+  MTLBuffer_InternalModifyCPUContents,
+  MTLBlitCommandEncoder_setLabel,
+  MTLBlitCommandEncoder_endEncoding,
+  MTLBlitCommandEncoder_insertDebugSignpost,
+  MTLBlitCommandEncoder_pushDebugGroup,
+  MTLBlitCommandEncoder_popDebugGroup,
+  MTLBlitCommandEncoder_synchronizeResource,
+  MTLBlitCommandEncoder_synchronizeTexture,
+  MTLBlitCommandEncoder_copyFromBuffer_toBuffer,
+  MTLBlitCommandEncoder_copyFromBuffer_toTexture,
+  MTLBlitCommandEncoder_copyFromBuffer_toTexture_options,
+  MTLBlitCommandEncoder_copyFromTexture_toBuffer,
+  MTLBlitCommandEncoder_copyFromTexture_toBuffer_options,
+  MTLBlitCommandEncoder_copyFromTexture_toTexture,
+  MTLBlitCommandEncoder_copyFromTexture_toTexture_slice_level_origin,
+  MTLBlitCommandEncoder_copyFromTexture_toTexture_slice_level_count,
+  MTLBlitCommandEncoder_generateMipmapsForTexture,
+  MTLBlitCommandEncoder_fillBuffer,
+  MTLBlitCommandEncoder_updateFence,
+  MTLBlitCommandEncoder_waitForFence,
+  MTLBlitCommandEncoder_getTextureAccessCounters,
+  MTLBlitCommandEncoder_resetTextureAccessCounters,
+  MTLBlitCommandEncoder_optimizeContentsForGPUAccess,
+  MTLBlitCommandEncoder_optimizeContentsForGPUAccess_slice_level,
+  MTLBlitCommandEncoder_optimizeContentsForCPUAccess,
+  MTLBlitCommandEncoder_optimizeContentsForCPUAccess_slice_level,
+  MTLBlitCommandEncoder_resetCommandsInBuffer,
+  MTLBlitCommandEncoder_copyIndirectCommandBuffer,
+  MTLBlitCommandEncoder_optimizeIndirectCommandBuffer,
+  MTLBlitCommandEncoder_sampleCountersInBuffer,
+  MTLBlitCommandEncoder_resolveCounters,
   Max
 };
 
@@ -162,12 +305,18 @@ DECLARE_REFLECTION_ENUM(MetalChunk);
 #define IsReplayingAndReading() (ser.IsReading() && IsReplayMode(m_Device->GetState()))
 
 #ifdef __OBJC__
-#define METAL_NOT_HOOKED()                                                          \
-  do                                                                                \
-  {                                                                                 \
-    RDCERR("Metal %s %s not hooked", object_getClassName(self), sel_getName(_cmd)); \
+#define METAL_NOT_HOOKED()                                                            \
+  do                                                                                  \
+  {                                                                                   \
+    RDCFATAL("Metal %s %s not hooked", object_getClassName(self), sel_getName(_cmd)); \
   } while((void)0, 0)
 #endif
+
+#define METAL_CAPTURE_NOT_IMPLEMENTED()                                \
+  do                                                                   \
+  {                                                                    \
+    RDCERR("Metal '%s' capture not implemented", __PRETTY_FUNCTION__); \
+  } while((void)0, 0)
 
 // similar to RDCUNIMPLEMENTED but without the debugbreak
 #define METAL_NOT_IMPLEMENTED(...)                                            \
@@ -186,3 +335,10 @@ DECLARE_REFLECTION_ENUM(MetalChunk);
       RDCWARN("Metal '%s' not implemented - " __VA_ARGS__, __PRETTY_FUNCTION__); \
     msgprinted = true;                                                           \
   } while((void)0, 0)
+
+BlendMultiplier MakeBlendMultiplier(MTL::BlendFactor blend);
+BlendOperation MakeBlendOp(MTL::BlendOperation op);
+byte MakeWriteMask(MTL::ColorWriteMask mask);
+ResourceFormat MakeResourceFormat(MTL::PixelFormat mtlFormat);
+uint32_t GetByteSize(uint32_t width, uint32_t height, uint32_t depth, MTL::PixelFormat mtlFormat,
+                     uint32_t mip);

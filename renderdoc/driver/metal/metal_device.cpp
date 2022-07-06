@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #include "metal_device.h"
+#include "metal_buffer.h"
 #include "metal_command_queue.h"
 #include "metal_function.h"
 #include "metal_helpers_bridge.h"
@@ -36,6 +37,15 @@ WrappedMTLDevice::WrappedMTLDevice(MTL::Device *realMTLDevice, ResourceId objId)
 {
   AllocateObjCBridge(this);
   m_Device = this;
+
+  if(RenderDoc::Inst().IsReplayApp())
+  {
+  }
+  else
+  {
+    m_State = CaptureState::BackgroundCapturing;
+  }
+
   threadSerialiserTLSSlot = Threading::AllocateTLSSlot();
 
   m_ResourceManager = new MetalResourceManager(m_State, this);
@@ -128,6 +138,7 @@ WrappedMTLCommandQueue *WrappedMTLDevice::newCommandQueue()
       Serialise_newCommandQueue(ser, wrappedMTLCommandQueue);
       chunk = scope.Get();
     }
+
     MetalResourceRecord *record = GetResourceManager()->AddResourceRecord(wrappedMTLCommandQueue);
     record->AddChunk(chunk);
   }
@@ -177,9 +188,9 @@ WrappedMTLLibrary *WrappedMTLDevice::newDefaultLibrary()
       Serialise_newDefaultLibrary(ser, wrappedMTLLibrary);
       chunk = scope.Get();
     }
+
     MetalResourceRecord *record = GetResourceManager()->AddResourceRecord(wrappedMTLLibrary);
     record->AddChunk(chunk);
-    GetResourceManager()->MarkResourceFrameReferenced(id, eFrameRef_Read);
   }
   else
   {
@@ -225,9 +236,9 @@ WrappedMTLLibrary *WrappedMTLDevice::newLibraryWithSource(NS::String *source,
       Serialise_newLibraryWithSource(ser, wrappedMTLLibrary, source, options, error);
       chunk = scope.Get();
     }
+
     MetalResourceRecord *record = GetResourceManager()->AddResourceRecord(wrappedMTLLibrary);
     record->AddChunk(chunk);
-    GetResourceManager()->MarkResourceFrameReferenced(id, eFrameRef_Read);
   }
   else
   {
@@ -235,6 +246,42 @@ WrappedMTLLibrary *WrappedMTLDevice::newLibraryWithSource(NS::String *source,
     //     GetResourceManager()->AddLiveResource(id, wrappedMTLLibrary);
   }
   return wrappedMTLLibrary;
+}
+
+template <typename SerialiserType>
+bool WrappedMTLDevice::Serialise_newBufferWithBytes(SerialiserType &ser, WrappedMTLBuffer *buffer,
+                                                    const void *pointer, NS::UInteger length,
+                                                    MTL::ResourceOptions options)
+{
+  SERIALISE_ELEMENT_LOCAL(Buffer, GetResID(buffer)).TypedAs("MTLBuffer"_lit);
+  bytebuf initialData;
+  if(pointer)
+  {
+    initialData.assign((byte *)pointer, length);
+  }
+  SERIALISE_ELEMENT(initialData);
+  SERIALISE_ELEMENT(length).Important();
+  SERIALISE_ELEMENT(options);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  // TODO: implement RD MTL replay
+  if(IsReplayingAndReading())
+  {
+  }
+  return true;
+}
+
+WrappedMTLBuffer *WrappedMTLDevice::newBufferWithBytes(const void *pointer, NS::UInteger length,
+                                                       MTL::ResourceOptions options)
+{
+  return Common_NewBuffer(true, pointer, length, options);
+}
+
+WrappedMTLBuffer *WrappedMTLDevice::newBufferWithLength(NS::UInteger length,
+                                                        MTL::ResourceOptions options)
+{
+  return Common_NewBuffer(false, NULL, length, options);
 }
 
 template <typename SerialiserType>
@@ -500,6 +547,37 @@ WrappedMTLTexture *WrappedMTLDevice::Common_NewTexture(RDMTL::TextureDescriptor 
   return wrappedMTLTexture;
 }
 
+WrappedMTLBuffer *WrappedMTLDevice::Common_NewBuffer(bool withBytes, const void *pointer,
+                                                     NS::UInteger length,
+                                                     MTL::ResourceOptions options)
+{
+  MTL::Buffer *realMTLBuffer;
+  SERIALISE_TIME_CALL(realMTLBuffer = withBytes ? Unwrap(this)->newBuffer(pointer, length, options)
+                                                : Unwrap(this)->newBuffer(length, options));
+
+  WrappedMTLBuffer *wrappedMTLBuffer;
+  ResourceId id = GetResourceManager()->WrapResource(realMTLBuffer, wrappedMTLBuffer);
+  if(IsCaptureMode(m_State))
+  {
+    Chunk *chunk = NULL;
+    {
+      CACHE_THREAD_SERIALISER();
+      SCOPED_SERIALISE_CHUNK(withBytes ? MetalChunk::MTLDevice_newBufferWithBytes
+                                       : MetalChunk::MTLDevice_newBufferWithLength);
+      Serialise_newBufferWithBytes(ser, wrappedMTLBuffer, pointer, length, options);
+      chunk = scope.Get();
+    }
+
+    MetalResourceRecord *record = GetResourceManager()->AddResourceRecord(wrappedMTLBuffer);
+    record->AddChunk(chunk);
+  }
+  else
+  {
+    // TODO: implement RD MTL replay
+  }
+  return wrappedMTLBuffer;
+}
+
 INSTANTIATE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLDevice, WrappedMTLCommandQueue *,
                                             newCommandQueue);
 INSTANTIATE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLDevice, WrappedMTLLibrary *, newDefaultLibrary);
@@ -514,3 +592,6 @@ INSTANTIATE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLDevice,
 INSTANTIATE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLDevice, WrappedMTLTexture *,
                                             newTextureWithDescriptor,
                                             RDMTL::TextureDescriptor &descriptor);
+INSTANTIATE_FUNCTION_WITH_RETURN_SERIALISED(WrappedMTLDevice, WrappedMTLBuffer *,
+                                            newBufferWithBytes, const void *pointer,
+                                            NS::UInteger length, MTL::ResourceOptions options);

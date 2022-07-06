@@ -501,12 +501,13 @@ struct GLMarkerRegion
 // - i.e. change state through here, and track dirty bits.
 struct GLPushPopState
 {
-  bool enableBits[8];
+  bool enableBits[9];
   GLenum ClipOrigin, ClipDepth;
   GLenum EquationRGB, EquationAlpha;
   GLenum SourceRGB, SourceAlpha;
   GLenum DestinationRGB, DestinationAlpha;
   GLenum PolygonMode;
+  GLdouble bounds[2];
   GLfloat Viewportf[4];
   GLint Viewport[4];
   GLenum ActiveTexture;
@@ -878,7 +879,7 @@ enum class ShaderType;
 // fills out the extension supported array and the version-specific checks above
 void DoVendorChecks(GLPlatform &platform, GLWindowingData context);
 void GetContextVersion(bool &ctxGLES, int &ctxVersion);
-void FetchEnabledExtensions();
+bool FetchEnabledExtensions();
 void GetGLSLVersions(ShaderType &shaderType, int &glslVersion, int &glslBaseVer, int &glslCSVer);
 
 GLuint CreateShader(GLenum shaderType, const rdcstr &src);

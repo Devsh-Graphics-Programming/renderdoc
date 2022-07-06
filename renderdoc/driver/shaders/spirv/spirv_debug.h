@@ -250,6 +250,17 @@ enum class DebugScope
   Block,
 };
 
+struct TypeData
+{
+  VarType type = VarType::Unknown;
+  uint32_t vecSize = 0, matSize = 0;
+  bool colMajorMat = false;
+
+  Id baseType;
+  uint32_t arrayDimension = 0;
+  rdcarray<rdcpair<rdcstr, Id>> structMembers;
+};
+
 struct ScopeData
 {
   DebugScope type;
@@ -274,11 +285,49 @@ struct LocalData
 {
   rdcstr name;
   ScopeData *scope;
-
-  Id curId;
+  TypeData *type;
 };
 
-typedef rdcpair<Id, Id> LocalMapping;
+struct LocalMapping
+{
+  bool operator<(const LocalMapping &o) const
+  {
+    if(sourceVar != o.sourceVar)
+      return sourceVar < o.sourceVar;
+    if(indexes != o.indexes)
+      return indexes < o.indexes;
+    return debugVar < o.debugVar;
+  }
+
+  bool isSourceSupersetOf(const LocalMapping &o) const
+  {
+    // this mapping is a superset of the other if:
+
+    // it's the same source var
+    if(sourceVar != o.sourceVar)
+      return false;
+
+    // it contains the same or fewer indices
+    if(o.indexes.size() < indexes.size())
+      return false;
+
+    // the common prefix of indexes is identical
+    for(size_t i = 0; i < indexes.size(); i++)
+      if(indexes[i] != o.indexes[i])
+        return false;
+
+    // if all those conditions are true, we either map to the same index (indexes size is the same -
+    // likely case) or else we cover a whole sub-tree where the other only covers a leaf (other has
+    // more indexes - unlikely but possible)
+    return true;
+  }
+
+  uint32_t stepIndex;
+  Id sourceVar;
+  Id debugVar;
+  bool isDeclare;
+  rdcarray<uint32_t> indexes;
+};
 
 class Debugger : public Processor, public ShaderDebugger
 {
@@ -293,6 +342,8 @@ public:
 
   rdcarray<ShaderDebugState> ContinueDebug();
 
+  void ApplyDebugSourceVars(size_t startOffs, ThreadState &thread, ShaderDebugState &state);
+
   Iter GetIterForInstruction(uint32_t inst);
   uint32_t GetInstructionForIter(Iter it);
   uint32_t GetInstructionForFunction(Id id);
@@ -302,6 +353,7 @@ public:
   const Decorations &GetDecorations(Id typeId);
   bool IsDebugExtInstSet(Id id) const;
   bool HasDebugInfo() const { return m_DebugInfo.valid; }
+  bool InDebugScope(uint32_t inst) const;
   rdcstr GetRawName(Id id) const;
   rdcstr GetHumanName(Id id);
   void AddSourceVars(rdcarray<SourceVariableMapping> &sourceVars, const ShaderVariable &var, Id id);
@@ -374,7 +426,7 @@ private:
   rdcarray<MemberName> memberNames;
   std::map<ShaderEntryPoint, Id> entryLookup;
 
-  SparseIdMap<size_t> idDeathOffset;
+  DenseIdMap<size_t> idDeathOffset;
 
   SparseIdMap<size_t> m_Files;
   LineColumnInfo m_CurLineCol;
@@ -406,6 +458,7 @@ private:
   {
     bool valid = false;
 
+    SparseIdMap<TypeData> types;
     SparseIdMap<ScopeData> scopes;
     SparseIdMap<InlineData> inlined;
     ScopeData *curScope = NULL;
@@ -422,7 +475,11 @@ private:
     std::map<size_t, ScopeData *> lineScope;
     std::map<size_t, InlineData *> lineInline;
     std::map<size_t, LocalMapping> localMappings;
+
+    rdcarray<LocalMapping> activeLocalMappings;
   } m_DebugInfo;
+
+  const ScopeData *GetScope(size_t offset) const;
 };
 
 // this does a 'safe' value assignment, by doing parallel depth-first iteration of both variables

@@ -238,11 +238,17 @@ extern void *LoadVulkanLibrary();
 class VkDriverInfo
 {
 public:
-  GPUVendor Vendor() { return m_Vendor; }
-  uint32_t Major() { return m_Major; }
-  uint32_t Minor() { return m_Minor; }
-  uint32_t Patch() { return m_Patch; }
+  GPUVendor Vendor() const { return m_Vendor; }
+  uint32_t Major() const { return m_Major; }
+  uint32_t Minor() const { return m_Minor; }
+  uint32_t Patch() const { return m_Patch; }
   VkDriverInfo(const VkPhysicalDeviceProperties &physProps, bool active = false);
+
+  bool operator==(const VkDriverInfo &o) const
+  {
+    return m_Vendor == o.m_Vendor && m_Major == o.m_Major && m_Minor == o.m_Minor &&
+           m_Patch == o.m_Patch;
+  }
 
   // checks for when we're running on metal and some non-queryable things aren't supported
   bool RunningOnMetal() const { return metalBackend; }
@@ -274,6 +280,9 @@ public:
   // hit the case where it's necessary (doing 'whole pass' partial replay of a subsection of a
   // command buffer where we need to apply dynamic state from earlier in the command buffer).
   bool QualcommLineWidthDynamicStateCrash() const { return qualcommLineWidthCrash; }
+  // on Intel, occlusion queries are broken unless the shader has some effects. When we don't want
+  // it to have visible effects during pixel history we have to insert some manual side-effects
+  bool IntelBrokenOcclusionQueries() const { return intelBrokenOcclusionQueries; }
 private:
   GPUVendor m_Vendor;
 
@@ -287,6 +296,7 @@ private:
   bool qualcommLeakingUBOOffsets = false;
   bool qualcommDrefNon2DCompileCrash = false;
   bool qualcommLineWidthCrash = false;
+  bool intelBrokenOcclusionQueries = false;
 };
 
 enum
@@ -963,7 +973,8 @@ DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentDensityMap2FeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentDensityMap2PropertiesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentDensityMapOffsetPropertiesQCOM);
-DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentShaderBarycentricFeaturesNV);
+DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR);
+DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentShaderBarycentricPropertiesKHR);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceGlobalPriorityQueryFeaturesKHR);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT);
@@ -1337,7 +1348,8 @@ DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentDensityMap2FeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentDensityMap2PropertiesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentDensityMapOffsetPropertiesQCOM);
-DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentShaderBarycentricFeaturesNV);
+DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR);
+DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentShaderBarycentricPropertiesKHR);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceGlobalPriorityQueryFeaturesKHR);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT);

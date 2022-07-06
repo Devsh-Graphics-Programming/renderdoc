@@ -299,6 +299,7 @@ private:
   RDResult m_FatalError = ResultCode::Succeeded;
   CaptureState m_State;
   bool m_AppControlledCapture = false;
+  bool m_FirstFrameCapture = false;
 
   int32_t m_ReuseEnabled = 1;
 
@@ -415,6 +416,8 @@ private:
   bool m_NULLDescriptorsAllowed = false;
   bool m_ExtendedDynState = false;
   bool m_ExtendedDynState2 = false;
+  bool m_ExtendedDynState2Logic = false;
+  bool m_ExtendedDynState2CPs = false;
   bool m_FragmentShadingRate = false;
   bool m_DynColorWrite = false;
   bool m_DynVertexInput = false;
@@ -434,6 +437,8 @@ private:
   VkDevice m_Device;
   // the data about the physical device used for the above device
   PhysicalDeviceData m_PhysicalDeviceData;
+  // the driver info for the original device
+  PhysicalDeviceData m_OrigPhysicalDeviceData;
   // the family index that we've selected in CreateDevice for our queue. During replay, this is an
   // index in the replay-time queues, not the capture-time queues (i.e. after remapping)
   uint32_t m_QueueFamilyIdx;
@@ -903,8 +908,10 @@ private:
 
   void FirstFrame();
 
+  rdcstr GetPhysDeviceCompatString(bool external, bool origInvalid);
   bool CheckMemoryRequirements(const char *resourceName, ResourceId memId,
-                               VkDeviceSize memoryOffset, VkMemoryRequirements mrq, bool external);
+                               VkDeviceSize memoryOffset, const VkMemoryRequirements &mrq,
+                               bool external, const VkMemoryRequirements &origMrq);
 
   void AddImplicitResolveResourceUsage(uint32_t subpass = 0);
   rdcarray<VkImageMemoryBarrier> GetImplicitRenderPassBarriers(uint32_t subpass = 0);
@@ -914,12 +921,12 @@ private:
   bool IsDrawInRenderPass();
 
   RDCDriver GetFrameCaptureDriver() { return RDCDriver::Vulkan; }
-  void StartFrameCapture(void *dev, void *wnd);
-  bool EndFrameCapture(void *dev, void *wnd);
-  bool DiscardFrameCapture(void *dev, void *wnd);
+  void StartFrameCapture(DeviceOwnedWindow devWnd);
+  bool EndFrameCapture(DeviceOwnedWindow devWnd);
+  bool DiscardFrameCapture(DeviceOwnedWindow devWnd);
 
   void AdvanceFrame();
-  void Present(void *dev, void *wnd);
+  void Present(DeviceOwnedWindow devWnd);
 
   void HandleFrameMarkers(const char *marker, VkCommandBuffer commandBuffer);
   void HandleFrameMarkers(const char *marker, VkQueue queue);
@@ -1160,6 +1167,8 @@ public:
   bool NULLDescriptorsAllowed() const { return m_NULLDescriptorsAllowed; }
   bool ExtendedDynamicState() const { return m_ExtendedDynState; }
   bool ExtendedDynamicState2() const { return m_ExtendedDynState2; }
+  bool ExtendedDynamicState2Logic() const { return m_ExtendedDynState2Logic; }
+  bool ExtendedDynamicState2CPs() const { return m_ExtendedDynState2CPs; }
   bool FragmentShadingRate() const { return m_FragmentShadingRate; }
   bool DynamicColorWrite() const { return m_DynColorWrite; }
   bool DynamicVertexInput() const { return m_DynVertexInput; }

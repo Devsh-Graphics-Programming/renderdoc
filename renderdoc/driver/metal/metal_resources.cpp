@@ -23,11 +23,14 @@
  ******************************************************************************/
 
 #include "metal_resources.h"
+#include "metal_blit_command_encoder.h"
+#include "metal_buffer.h"
 #include "metal_command_buffer.h"
 #include "metal_command_queue.h"
 #include "metal_device.h"
 #include "metal_function.h"
 #include "metal_library.h"
+#include "metal_render_command_encoder.h"
 #include "metal_render_pipeline_state.h"
 #include "metal_texture.h"
 
@@ -43,11 +46,6 @@ ResourceId GetResID(WrappedMTLObject *obj)
   MTL::CPPTYPE *Unwrap(WrappedMTL##CPPTYPE *obj) { return Unwrap<MTL::CPPTYPE *>(obj); }
 METALCPP_WRAPPED_PROTOCOLS(IMPLEMENT_WRAPPED_TYPE_HELPERS)
 #undef IMPLEMENT_WRAPPED_TYPE_HELPERS
-
-void WrappedMTLObject::Dealloc()
-{
-  // TODO: call the wrapped object destructor
-}
 
 MetalResourceManager *WrappedMTLObject::GetResourceManager()
 {
